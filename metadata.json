@@ -2,5 +2,7 @@
   "name": "AI Cartoon Studio",
   "description": "สตูดิโอสร้างวิดีโอแอนิเมชันการ์ตูนแนวตั้งภาษาไทย พร้อมเขียนบทอัตโนมัติ พากย์เสียง และส่งออกวิดีโอ MP4",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

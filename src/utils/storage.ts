@@ -187,8 +187,7 @@ export async function saveProjectFilesToLocal(
     files.push([`${baseName}.voice.${audioExt || 'wav'}`, new Blob([audioRaw])]);
   }
   if (videoBlob) {
-    const ext = videoBlob.type.includes('webm') ? 'webm' : 'mp4';
-    files.push([`${baseName}.${ext}`, videoBlob]);
+    files.push([`${baseName}.mp4`, videoBlob]);
   }
 
   if (dirHandle) {

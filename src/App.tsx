@@ -6,11 +6,22 @@ import { StudioView } from './components/StudioView';
 import { TopBar, type AppTab } from './components/TopBar';
 import type {
   CartoonProject,
+  PauseCandidate,
   SavedProjectRecord,
   StudioSelection,
   StudioSettings,
   VoiceName,
 } from './types/cartoon';
+import {
+  generateScriptViaOpenRouter,
+  getSavedCustomTtsKey,
+  getSavedOpenRouterKey,
+} from './utils/aiProviders';
+import {
+  buildAudioGraph,
+  exportMixedMp3,
+  type AudioGraphHandle,
+} from './utils/audioEngine';
 import { CANVAS_H, CANVAS_W, renderCartoonFrame } from './utils/canvasRenderer';
 import { DEMO_PROJECT } from './utils/cartoonData';
 import {
@@ -36,7 +47,12 @@ import {
   type DirHandle,
   type StorageSummary,
 } from './utils/storage';
-import { exportCartoonVideo, type VideoExportResult } from './utils/videoExport';
+import {
+  exportCartoonVideo,
+  runExportPreflight,
+  type ExportPreflightStatus,
+  type VideoExportResult,
+} from './utils/videoExport';
 
 function base64ToArrayBuffer(b64: string): ArrayBuffer {
   const bin = atob(b64);
@@ -53,13 +69,20 @@ export default function App() {
     return params.get('autostart') === '1' ? 'studio' : 'create';
   });
 
-  // Creation wizard state
+  // Creation wizard state (defaults to PAPER-SKETCH style matching reference video)
   const [selection, setSelection] = useState<StudioSelection>({
     mode: 'story',
-    genre: 'ตลก',
+    genre: 'ดราม่าซึ้ง',
     len: 30,
-    style: 'night',
-    end: 'summary',
+    audience: 'general',
+    style: 'paper',
+    layout: 'full',
+    topText: '',
+    bottomText: '',
+    subtitleStyle: 'sticker_dual',
+    hudEnabled: true,
+    cineEnabled: false,
+    end: 'twist',
   });
   const [topic, setTopic] = useState('');
   const [facts, setFacts] = useState('');
@@ -81,8 +104,8 @@ export default function App() {
   const [audioRaw, setAudioRaw] = useState<ArrayBuffer | null>(null);
   const [audioExt, setAudioExt] = useState('wav');
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
-  const [mixBuffer, setMixBuffer] = useState<AudioBuffer | null>(null);
   const [envelope, setEnvelope] = useState<number[]>([]);
+  const [pauseCandidates, setPauseCandidates] = useState<PauseCandidate[]>([]);
   const [speechBounds, setSpeechBounds] = useState<{ ss: number; se?: number }>({ ss: 0 });
   const [audioNote, setAudioNote] = useState('');
 
@@ -94,10 +117,12 @@ export default function App() {
   // Generation & Export state
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
+  const [isExportingMp3, setIsExportingMp3] = useState(false);
   const [genProgressText, setGenProgressText] = useState('');
   const [genProgressPct, setGenProgressPct] = useState(0);
   const [genError, setGenError] = useState<string | null>(null);
 
+  const [preflight, setPreflight] = useState<ExportPreflightStatus | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgressText, setExportProgressText] = useState('');
   const [exportProgressPct, setExportProgressPct] = useState(0);
@@ -122,9 +147,10 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
-  const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const audioGraphRef = useRef<AudioGraphHandle | null>(null);
   const rafRef = useRef<number | null>(null);
   const playStartCtxTimeRef = useRef(0);
+  const exportAbortRef = useRef<AbortController | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
   const notify = useCallback((msg: string) => {
@@ -151,6 +177,12 @@ export default function App() {
         leadSec: 0.4,
         speechStartSec: 0,
         speechEndSec: 1,
+        syncDiagnostics: {
+          foundPauses: 0,
+          matchedBoundaries: 0,
+          totalBoundaries: 0,
+          mode: 'estimated' as const,
+        },
       };
     }
     return buildTimeline(project.scenes, {
@@ -158,30 +190,10 @@ export default function App() {
       speechStartSec: speechBounds.ss,
       speechEndSec: speechBounds.se,
       sceneDurations: project.sceneDurations,
+      pauseCandidates,
+      globalOffset: project.globalOffset,
     });
-  }, [project, audioBuffer, speechBounds]);
-
-  // Rebuild mixBuffer whenever audioBuffer or timeline totalDuration changes
-  useEffect(() => {
-    if (!audioBuffer) {
-      setMixBuffer(null);
-      return;
-    }
-    const ctx = getAudioCtx();
-    const sr = audioBuffer.sampleRate;
-    const totalSamples = Math.max(1, Math.ceil(timelineResult.totalDuration * sr));
-    const mix = ctx.createBuffer(2, totalSamples, sr);
-    const offset = Math.floor(timelineResult.leadSec * sr);
-    const from = Math.floor(speechBounds.ss * sr);
-    const len = Math.min(audioBuffer.length - from, mix.length - offset);
-    if (len > 0) {
-      for (let ch = 0; ch < 2; ch++) {
-        const srcCh = audioBuffer.getChannelData(Math.min(ch, audioBuffer.numberOfChannels - 1));
-        mix.copyToChannel(srcCh.subarray(from, from + len), ch, offset);
-      }
-    }
-    setMixBuffer(mix);
-  }, [audioBuffer, timelineResult.totalDuration, timelineResult.leadSec, speechBounds.ss, getAudioCtx]);
+  }, [project, audioBuffer, speechBounds, pauseCandidates]);
 
   const stopPlayback = useCallback(() => {
     setIsPlaying(false);
@@ -190,11 +202,11 @@ export default function App() {
       rafRef.current = null;
     }
     try {
-      sourceNodeRef.current?.stop();
+      audioGraphRef.current?.stop();
     } catch {
       // ignore
     }
-    sourceNodeRef.current = null;
+    audioGraphRef.current = null;
   }, []);
 
   const drawAt = useCallback(
@@ -209,10 +221,19 @@ export default function App() {
         speechStartSec: speechBounds.ss,
         scale: 1,
         subtitleScale: settings.subtitleScale,
+        pauseCandidates,
+        cineEnabled: project.cineLayer?.enabled,
       });
     },
-    [project, timelineResult, envelope, speechBounds.ss, settings.subtitleScale]
+    [project, timelineResult, envelope, speechBounds.ss, settings.subtitleScale, pauseCandidates]
   );
+
+  // Clamp currentTime if timeline duration shrinks (e.g. deleting scenes or setting shorter manual duration)
+  useEffect(() => {
+    if (!isPlaying && timelineResult.totalDuration > 0 && currentTime > timelineResult.totalDuration) {
+      setCurrentTime(Math.max(0, Number((timelineResult.totalDuration - 0.05).toFixed(2))));
+    }
+  }, [isPlaying, currentTime, timelineResult.totalDuration]);
 
   // Redraw canvas whenever frame time or project changes while paused
   useEffect(() => {
@@ -233,15 +254,21 @@ export default function App() {
       gain.connect(ctx.destination);
       gainNodeRef.current = gain;
 
-      if (mixBuffer) {
-        const src = ctx.createBufferSource();
-        src.buffer = mixBuffer;
-        src.connect(gain);
-        src.start(0, Math.max(0, fromSec));
-        sourceNodeRef.current = src;
-      }
+      const baseCtxTime = ctx.currentTime;
+      audioGraphRef.current = buildAudioGraph(ctx, gain, fromSec, {
+        project,
+        timeline: timelineResult.timeline,
+        totalDuration: timelineResult.totalDuration,
+        voiceBuffer: audioBuffer,
+        speechStartSec: speechBounds.ss,
+        leadSec: timelineResult.leadSec,
+        envelope,
+        pauseCandidates,
+        enableBgmAndSfx: settings.enableBgmAndSfx,
+        baseCtxTime,
+      });
 
-      playStartCtxTimeRef.current = ctx.currentTime - fromSec;
+      playStartCtxTimeRef.current = baseCtxTime - fromSec;
       setIsPlaying(true);
 
       const tick = () => {
@@ -252,13 +279,28 @@ export default function App() {
           drawAt(timelineResult.totalDuration);
           return;
         }
+        audioGraphRef.current?.schedulerTick(elapsed);
         setCurrentTime(elapsed);
         drawAt(elapsed);
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
     },
-    [project, timelineResult.timeline.length, timelineResult.totalDuration, stopPlayback, getAudioCtx, isMuted, mixBuffer, drawAt]
+    [
+      project,
+      timelineResult.timeline,
+      timelineResult.totalDuration,
+      timelineResult.leadSec,
+      stopPlayback,
+      getAudioCtx,
+      isMuted,
+      audioBuffer,
+      speechBounds.ss,
+      envelope,
+      pauseCandidates,
+      settings.enableBgmAndSfx,
+      drawAt,
+    ]
   );
 
   const togglePlay = useCallback(() => {
@@ -327,6 +369,7 @@ export default function App() {
       const env = computeAudioEnvelope(decoded.getChannelData(0), decoded.sampleRate);
       setAudioBuffer(decoded);
       setEnvelope(env.envelope);
+      setPauseCandidates(env.pauseCandidates);
       setSpeechBounds(
         useExactDurations
           ? { ss: 0, se: decoded.duration }
@@ -390,13 +433,66 @@ export default function App() {
   const synthesizeVoicesForProject = useCallback(
     async (proj: CartoonProject): Promise<{
       raw: ArrayBuffer;
+      ext: string;
       sceneDurations?: number[];
     }> => {
+      const scenes = proj.scenes.map((s) => s.narration);
+
+      if (settings.ttsProvider === 'pythai') {
+        const resp = await fetch('/api/tts-pythai', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            scenes,
+            endpoint: settings.pythaiEndpoint,
+            model: settings.pythaiModel,
+            speaker: settings.pythaiSpeaker,
+          }),
+        });
+        const data = (await resp.json()) as {
+          audioBase64?: string;
+          sceneDurations?: number[];
+          error?: string;
+        };
+        if (!resp.ok || !data.audioBase64) {
+          throw new Error(data.error || `PyThaiTTS HTTP ${resp.status}`);
+        }
+        return {
+          raw: base64ToArrayBuffer(data.audioBase64),
+          ext: 'wav',
+          sceneDurations: data.sceneDurations,
+        };
+      }
+
+      if (settings.ttsProvider === 'openai_compatible') {
+        const apiKey = getSavedCustomTtsKey();
+        const resp = await fetch('/api/tts-custom', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            endpoint: settings.customTtsEndpoint,
+            apiKey,
+            model: settings.customTtsModel,
+            voice: settings.customTtsVoice,
+            scenes,
+          }),
+        });
+        const data = (await resp.json()) as { audioBase64?: string; error?: string };
+        if (!resp.ok || !data.audioBase64) {
+          throw new Error(data.error || `Custom TTS HTTP ${resp.status}`);
+        }
+        return {
+          raw: base64ToArrayBuffer(data.audioBase64),
+          ext: 'mp3',
+        };
+      }
+
+      // Default: Built-in Gemini TTS
       const resp = await fetch('/api/generate-tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          scenes: proj.scenes.map((s) => s.narration),
+          scenes,
           voiceName: settings.voiceName,
           stylePrompt: settings.voiceStyle,
         }),
@@ -411,10 +507,11 @@ export default function App() {
       }
       return {
         raw: base64ToArrayBuffer(data.audioBase64),
+        ext: 'wav',
         sceneDurations: data.sceneDurations,
       };
     },
-    [settings.voiceName, settings.voiceStyle]
+    [settings]
   );
 
   async function handleGenerateCartoon() {
@@ -426,59 +523,95 @@ export default function App() {
     stopPlayback();
     setGenError(null);
     setIsGenerating(true);
-    setGenProgressText('AI กำลังเขียนบท ออกแบบตัวละคร และวางฉาก…');
-    setGenProgressPct(20);
+    setGenProgressText(
+      settings.aiProvider === 'openrouter'
+        ? `กำลังเขียนบทผ่าน OpenRouter (${settings.openRouterModel})…`
+        : 'AI กำลังเขียนบท ออกแบบตัวละคร และวางฉาก…'
+    );
+    setGenProgressPct(22);
 
     try {
-      const scriptResp = await fetch('/api/generate-script', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: selection.mode,
-          genre: selection.genre,
-          lengthSec: selection.len,
-          style: selection.style,
-          end: selection.end,
+      let generatedProj: CartoonProject;
+
+      if (settings.aiProvider === 'openrouter') {
+        const key = getSavedOpenRouterKey();
+        if (!key) {
+          throw new Error('กรุณาเพิ่ม OpenRouter API Key ในหน้า "ตั้งค่า" ก่อนใช้งาน');
+        }
+        generatedProj = await generateScriptViaOpenRouter({
+          apiKey: key,
+          model: settings.openRouterModel,
+          selection,
           topic: topic.trim(),
           facts: facts.trim(),
-        }),
-      });
+        });
+      } else {
+        const scriptResp = await fetch('/api/generate-script', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: selection.mode,
+            genre: selection.genre,
+            audience: selection.audience,
+            lengthSec: selection.len,
+            style: selection.style,
+            layout: selection.layout,
+            topText: selection.topText,
+            bottomText: selection.bottomText,
+            subtitleStyle: selection.subtitleStyle,
+            hudEnabled: selection.hudEnabled,
+            cineEnabled: selection.cineEnabled,
+            end: selection.end,
+            topic: topic.trim(),
+            facts: facts.trim(),
+          }),
+        });
 
-      const scriptData = (await scriptResp.json()) as {
-        project?: CartoonProject;
-        error?: string;
-      };
-      if (!scriptResp.ok || !scriptData.project) {
-        throw new Error(scriptData.error || 'สร้างบทการ์ตูนไม่สำเร็จ');
+        const scriptData = (await scriptResp.json()) as {
+          project?: CartoonProject;
+          error?: string;
+        };
+        if (!scriptResp.ok || !scriptData.project) {
+          throw new Error(scriptData.error || 'สร้างบทการ์ตูนไม่สำเร็จ');
+        }
+
+        generatedProj = normalizeProject(scriptData.project, {
+          style: selection.style,
+          end: selection.end,
+          layout: selection.layout,
+          topText: selection.topText,
+          bottomText: selection.bottomText,
+          subtitleStyle: selection.subtitleStyle,
+          hudEnabled: selection.hudEnabled,
+          cineEnabled: selection.cineEnabled,
+        });
       }
 
-      let generatedProj = normalizeProject(scriptData.project, {
-        style: selection.style,
-        end: selection.end,
-      });
-
-      setGenProgressText('กำลังสร้างเสียงพากย์ภาษาไทยทีละฉาก…');
-      setGenProgressPct(60);
+      setGenProgressText('กำลังสังเคราะห์เสียงพากย์ภาษาไทย…');
+      setGenProgressPct(62);
 
       let nextAudioRaw: ArrayBuffer | null = null;
+      let nextExt = 'wav';
       let nextNote = 'สร้างบทและเสียงพากย์เสร็จสมบูรณ์';
 
       try {
         const ttsOut = await synthesizeVoicesForProject(generatedProj);
         nextAudioRaw = ttsOut.raw;
+        nextExt = ttsOut.ext;
         if (ttsOut.sceneDurations && ttsOut.sceneDurations.length === generatedProj.scenes.length) {
           generatedProj = { ...generatedProj, sceneDurations: ttsOut.sceneDurations };
         }
-        await decodeAudioBytes(nextAudioRaw, true);
+        await decodeAudioBytes(nextAudioRaw, Boolean(ttsOut.sceneDurations));
       } catch (ttsErr) {
         const msg = ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
-        nextNote = `ยังไม่มีเสียงพากย์ (${msg}) — สามารถกดพากย์เสียงใหม่หรือนำเข้าไฟล์เสียงเองได้`;
+        nextNote = `ยังไม่มีเสียงพากย์ (${msg}) — สามารถสลับไปใช้ PyThaiTTS / Gemini TTS หรือนำเข้าเสียงเองได้`;
         setAudioBuffer(null);
         setEnvelope([]);
+        setPauseCandidates([]);
       }
 
       setAudioRaw(nextAudioRaw);
-      setAudioExt('wav');
+      setAudioExt(nextExt);
       setAudioNote(nextNote);
       setExportResult(null);
       if (exportVideoUrl) {
@@ -490,7 +623,7 @@ export default function App() {
 
       setGenProgressText('กำลังจัดเก็บโปรเจกต์…');
       setGenProgressPct(92);
-      await persistProject(generatedProj, nextAudioRaw, 'wav', null, null, true);
+      await persistProject(generatedProj, nextAudioRaw, nextExt, null, null, true);
 
       setGenProgressText('พร้อมรับชมในสตูดิโอแล้ว');
       setGenProgressPct(100);
@@ -506,6 +639,26 @@ export default function App() {
     }
   }
 
+  function handleImportOutputG(imported: CartoonProject) {
+    stopPlayback();
+    setProject(imported);
+    setProjectId(null);
+    setAudioRaw(null);
+    setAudioBuffer(null);
+    setEnvelope([]);
+    setPauseCandidates([]);
+    setSpeechBounds({ ss: 0 });
+    setAudioNote('นำเข้าแพ็กเกจ OUTPUT G เรียบร้อย กด "พากย์เสียง AI" หรือ "นำเข้าเสียงพากย์" เพื่อซิงก์');
+    setExportResult(null);
+    if (exportVideoUrl) {
+      URL.revokeObjectURL(exportVideoUrl);
+      setExportVideoUrl(null);
+    }
+    setCurrentTime(0);
+    setActiveTab('studio');
+    notify(`นำเข้า "${imported.title}" สำเร็จ`);
+  }
+
   async function handleRegenerateAudio() {
     if (!project) return;
     stopPlayback();
@@ -519,11 +672,11 @@ export default function App() {
           : project;
       setProject(nextProj);
       setAudioRaw(ttsOut.raw);
-      setAudioExt('wav');
-      await decodeAudioBytes(ttsOut.raw, true);
+      setAudioExt(ttsOut.ext);
+      await decodeAudioBytes(ttsOut.raw, Boolean(ttsOut.sceneDurations));
       setAudioNote('สร้างเสียงพากย์ใหม่เสร็จสมบูรณ์และซิงก์เข้ากับทุกฉากแล้ว');
       notify('อัปเดตเสียงพากย์เรียบร้อย');
-      await persistProject(nextProj, ttsOut.raw, 'wav', exportResult?.blob ?? null, projectId, true);
+      await persistProject(nextProj, ttsOut.raw, ttsOut.ext, exportResult?.blob ?? null, projectId, true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setAudioNote(`สังเคราะห์เสียงไม่สำเร็จ: ${msg}`);
@@ -544,11 +697,11 @@ export default function App() {
       setProject(nextProj);
       setAudioRaw(raw);
       setAudioExt(ext);
-      setAudioNote(`นำเข้าไฟล์เสียง ${file.name} แล้ว`);
-      notify('นำเข้าไฟล์เสียงสำเร็จ');
+      setAudioNote(`นำเข้าไฟล์เสียง ${file.name} และวิเคราะห์ช่วงเงียบเพื่อซิงก์แล้ว`);
+      notify('นำเข้าและซิงก์เสียงสำเร็จ');
       await persistProject(nextProj, raw, ext, exportResult?.blob ?? null, projectId, true);
     } catch {
-      notify('ไฟล์เสียงนี้ไม่สามารถถอดรหัสได้ กรุณาลองใช้ MP3 หรือ WAV');
+      notify('ไฟล์เสียงนี้เบราว์เซอร์อ่านไม่ได้ ลองแปลงเป็น MP3 หรือ WAV');
     }
   }
 
@@ -559,8 +712,9 @@ export default function App() {
     setAudioRaw(null);
     setAudioBuffer(null);
     setEnvelope([]);
+    setPauseCandidates([]);
     setSpeechBounds({ ss: 0 });
-    setAudioNote('โปรเจกต์ตัวอย่างพร้อมรับชม (กด "พากย์เสียง AI" เพื่อสร้างเสียงจริง หรือปรับแก้บทได้ทันที)');
+    setAudioNote('ตัวอย่างสไตล์ PAPER-SKETCH ("สวัสดีวันจันทร์ · บ้านเรา 7 คน") — กดพากย์เสียง AI หรือปรับเวลาได้ทันที');
     setExportResult(null);
     if (exportVideoUrl) {
       URL.revokeObjectURL(exportVideoUrl);
@@ -586,11 +740,13 @@ export default function App() {
       } catch {
         setAudioBuffer(null);
         setEnvelope([]);
+        setPauseCandidates([]);
         setAudioNote('ไฟล์เสียงที่บันทึกไว้ไม่สามารถอ่านได้');
       }
     } else {
       setAudioBuffer(null);
       setEnvelope([]);
+      setPauseCandidates([]);
       setAudioNote('โปรเจกต์นี้ยังไม่มีเสียงพากย์ สามารถกดพากย์เสียง AI หรือนำเข้าเสียงเองได้');
     }
 
@@ -600,11 +756,17 @@ export default function App() {
       setExportVideoUrl(url);
       setExportResult({
         blob: rec.video,
-        mimeType: rec.video.type || 'video/mp4',
-        ext: rec.video.type.includes('webm') ? 'webm' : 'mp4',
+        mimeType: 'video/mp4',
+        ext: 'mp4',
         durationSec: null,
         hasAudioTrack: Boolean(rec.audio),
+        audioVerifiedStatus: rec.audio ? 'detected' : 'unverifiable',
         usedScale: 1,
+        usedWidth: 720,
+        usedHeight: 1280,
+        usedCodec: 'avc1.42001f',
+        usedAudioCodec: 'aac',
+        downscaleWarning: null,
       });
     } else {
       setExportVideoUrl(null);
@@ -615,15 +777,31 @@ export default function App() {
     setActiveTab('studio');
   }
 
+  const handleRunPreflight = useCallback(async () => {
+    const ctx = audioCtxRef.current;
+    const res = await runExportPreflight({
+      hasVoiceover: Boolean(audioBuffer),
+      audioCtxState: ctx?.state,
+      want1080: settings.defaultRes === '1080',
+    });
+    setPreflight(res);
+  }, [audioBuffer, settings.defaultRes]);
+
   async function handleExportVideo() {
     if (!project) return;
     stopPlayback();
     setExportError(null);
     setIsExporting(true);
-    setExportProgressText('เตรียมตัวเข้ารหัสวิดีโอ…');
+    setExportProgressText('เตรียมตัวเข้ารหัส MP4…');
     setExportProgressPct(2);
 
+    const ac = new AbortController();
+    exportAbortRef.current = ac;
+
     try {
+      const ctx = getAudioCtx();
+      await ctx.resume().catch(() => {});
+
       const res = await exportCartoonVideo({
         project,
         timeline: timelineResult.timeline,
@@ -631,9 +809,13 @@ export default function App() {
         envelope,
         leadSec: timelineResult.leadSec,
         speechStartSec: speechBounds.ss,
-        mixBuffer,
+        pauseCandidates,
+        voiceBuffer: audioBuffer,
+        enableBgmAndSfx: settings.enableBgmAndSfx,
+        cineEnabled: Boolean(project.cineLayer?.enabled),
         want1080: settings.defaultRes === '1080',
         subtitleScale: settings.subtitleScale,
+        signal: ac.signal,
         onProgress: (msg, pct) => {
           setExportProgressText(msg);
           setExportProgressPct(pct);
@@ -644,8 +826,10 @@ export default function App() {
       const url = URL.createObjectURL(res.blob);
       setExportResult(res);
       setExportVideoUrl(url);
+      // Try auto-download once (not relied upon exclusively — player + 4 buttons always remain visible)
+      triggerDownload(res.blob, `${sanitizeFilename(project.title)}.mp4`);
       await persistProject(project, audioRaw, audioExt, res.blob, projectId, true);
-      notify('สร้างไฟล์วิดีโอเสร็จสมบูรณ์');
+      notify('สร้างและตรวจสอบไฟล์ MP4 เสร็จสมบูรณ์');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setExportError(msg);
@@ -653,27 +837,53 @@ export default function App() {
       setExportProgressPct(0);
     } finally {
       setIsExporting(false);
+      exportAbortRef.current = null;
+    }
+  }
+
+  async function handleDownloadMp3() {
+    if (!project) return;
+    setIsExportingMp3(true);
+    try {
+      const mp3Blob = await exportMixedMp3({
+        project,
+        timeline: timelineResult.timeline,
+        totalDuration: timelineResult.totalDuration,
+        voiceBuffer: audioBuffer,
+        speechStartSec: speechBounds.ss,
+        leadSec: timelineResult.leadSec,
+        envelope,
+        pauseCandidates,
+        enableBgmAndSfx: settings.enableBgmAndSfx,
+      });
+      triggerDownload(mp3Blob, `${sanitizeFilename(project.title)}.mp3`);
+      notify('ดาวน์โหลดไฟล์เสียงรวม (.mp3) แล้ว');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'ส่งออก MP3 ไม่สำเร็จ');
+    } finally {
+      setIsExportingMp3(false);
     }
   }
 
   async function handleShareVideo() {
     if (!exportResult || !project) return;
-    const filename = `${sanitizeFilename(project.title)}.${exportResult.ext}`;
-    const file = new File([exportResult.blob], filename, { type: exportResult.mimeType });
+    const filename = `${sanitizeFilename(project.title)}.mp4`;
+    const file = new File([exportResult.blob], filename, { type: 'video/mp4' });
     if (navigator.canShare?.({ files: [file] })) {
       try {
         await navigator.share({ files: [file], title: project.title });
       } catch {
-        // user cancelled share
+        // cancelled
       }
     } else {
-      notify('เบราว์เซอร์นี้ไม่รองรับการแชร์ไฟล์โดยตรง กรุณาใช้ปุ่มดาวน์โหลด');
+      notify('เบราว์เซอร์นี้ไม่รองรับการแชร์ไฟล์โดยตรง กรุณาใช้ปุ่มดาวน์โหลด MP4');
     }
   }
 
   async function handlePickDirectory() {
-    const picker = (window as unknown as { showDirectoryPicker?: (o: { mode: string }) => Promise<DirHandle> })
-      .showDirectoryPicker;
+    const picker = (
+      window as unknown as { showDirectoryPicker?: (o: { mode: string }) => Promise<DirHandle> }
+    ).showDirectoryPicker;
     if (!picker) {
       notify('เบราว์เซอร์นี้ไม่รองรับการเลือกโฟลเดอร์ ใช้การดาวน์โหลดไฟล์แทน');
       return;
@@ -735,12 +945,17 @@ export default function App() {
             onChangeVoice={(voice: VoiceName) =>
               handleUpdateSettings({ ...settings, voiceName: voice })
             }
+            aiProvider={settings.aiProvider}
+            openRouterModel={settings.openRouterModel}
+            ttsProvider={settings.ttsProvider}
             isGenerating={isGenerating}
             progressText={genProgressText}
             progressPct={genProgressPct}
             errorText={genError}
             onGenerate={handleGenerateCartoon}
+            onImportOutputG={handleImportOutputG}
             onLoadDemo={handleOpenDemo}
+            onGoSettings={() => setActiveTab('settings')}
             savedProjects={savedProjects}
             onOpenProject={handleOpenSavedProject}
           />
@@ -751,6 +966,7 @@ export default function App() {
             canvasRef={canvasRef}
             project={project}
             timeline={timelineResult.timeline}
+            syncDiagnostics={timelineResult.syncDiagnostics}
             currentTime={currentTime}
             totalDuration={timelineResult.totalDuration}
             isPlaying={isPlaying}
@@ -759,8 +975,10 @@ export default function App() {
             audioExt={audioExt}
             audioNote={audioNote}
             isGeneratingAudio={isGeneratingAudio}
+            isExportingMp3={isExportingMp3}
             exportResolution={settings.defaultRes}
             subtitleScale={settings.subtitleScale}
+            preflight={preflight}
             isExporting={isExporting}
             exportProgressText={exportProgressText}
             exportProgressPct={exportProgressPct}
@@ -772,14 +990,7 @@ export default function App() {
             onToggleMute={handleToggleMute}
             onImportAudio={handleImportAudio}
             onRegenerateAudio={handleRegenerateAudio}
-            onDownloadAudio={() => {
-              if (!audioRaw || !project) return;
-              const mime = audioExt === 'wav' ? 'audio/wav' : 'audio/mpeg';
-              triggerDownload(
-                new Blob([audioRaw], { type: mime }),
-                `${sanitizeFilename(project.title)}.voice.${audioExt || 'wav'}`
-              );
-            }}
+            onDownloadMp3={handleDownloadMp3}
             onSaveProject={() =>
               project &&
               persistProject(project, audioRaw, audioExt, exportResult?.blob ?? null, projectId)
@@ -790,7 +1001,9 @@ export default function App() {
             onChangeSubtitleScale={(scale) =>
               handleUpdateSettings({ ...settings, subtitleScale: scale })
             }
+            onRunPreflight={handleRunPreflight}
             onExportVideo={handleExportVideo}
+            onCancelExport={() => exportAbortRef.current?.abort()}
             onShareVideo={handleShareVideo}
             onGoCreate={() => setActiveTab('create')}
           />
