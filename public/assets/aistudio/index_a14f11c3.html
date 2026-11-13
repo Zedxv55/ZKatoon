@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="th"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AI Cartoon Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b0a12;--c:#1a1730;--c2:#252242;--ac:#8b5cf6;--tx:#f2efff;--mu:#9a95bd;--ok:#34d399;--er:#f87171}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:radial-gradient(120% 60% at 50% 0,#251a52,var(--bg) 60%);color:var(--tx);font:16px Prompt,"Noto Sans Thai",sans-serif;min-height:100dvh;padding:0 16px calc(96px + env(safe-area-inset-bottom));padding-top:env(safe-area-inset-top)}
+h1{font-size:22px;margin:16px 0 4px;background:linear-gradient(90deg,#c4b5fd,#8b5cf6);-webkit-background-clip:text;color:transparent}
+h2{font-size:18px;margin:22px 0 10px}.mu{color:var(--mu);font-size:14px}
+.top{display:flex;justify-content:space-between;align-items:center}
+.chip{font-size:13px;padding:6px 12px;border-radius:12px;background:var(--c);border:1px solid #ffffff14}
+.ok{color:var(--ok)}.er{color:var(--er)}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+.opt{padding:12px 16px;border-radius:16px;background:var(--c);border:2px solid transparent;color:var(--tx);font:inherit;min-height:48px}
+.opt.on{border-color:var(--ac);background:#2d2166}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tile{border-radius:18px;padding:12px;min-height:110px;border:3px solid transparent;color:#fff;text-align:left;font:inherit;position:relative;overflow:hidden;text-shadow:0 1px 6px #0008}
+.tile.on{border-color:#fff;box-shadow:0 0 0 3px var(--ac)}
+.tile b{display:block;font-size:15px}.tile small{font-size:12px;opacity:.9}.tile i{position:absolute;right:8px;top:6px;font-size:34px;font-style:normal}
+input,textarea,select{width:100%;padding:13px;border-radius:14px;border:1px solid #ffffff22;background:var(--c);color:var(--tx);font:inherit;margin:4px 0 10px}
+textarea{min-height:84px}label{font-size:14px;color:var(--mu)}
+.btn{display:block;width:100%;min-height:54px;border:0;border-radius:18px;background:linear-gradient(135deg,#8b5cf6,#6d44e0);color:#fff;font:800 17px Prompt;margin:10px 0}
+.btn.s{background:var(--c2);font-weight:600}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#100e1cf2;border-top:1px solid #ffffff14;padding:8px 8px calc(8px + env(safe-area-inset-bottom));backdrop-filter:blur(10px);z-index:5}
+nav button{flex:1;background:0;border:0;color:var(--mu);font:inherit;font-size:12px;min-height:52px}
+nav button.on{color:#c4b5fd}nav span{display:block;font-size:22px}
+.v{display:none}.v.on{display:block}
+.card{background:var(--c);border-radius:20px;padding:14px;margin:10px 0}
+#warn{display:none;background:#b45309;padding:10px;border-radius:12px;margin:10px 0;font-size:14px}
+canvas{width:100%;max-width:380px;display:block;margin:10px auto;border-radius:18px;background:#000;box-shadow:0 10px 40px #0008}
+video{width:100%;max-width:380px;display:block;margin:10px auto;border-radius:18px}
+input[type=range]{padding:0;margin:6px 0}
+.bar{height:10px;background:var(--c2);border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--ac)}
+#toast{position:fixed;left:16px;right:16px;bottom:100px;background:#000d;padding:12px;border-radius:14px;display:none;z-index:9;font-size:14px}
+.pr{display:flex;gap:8px;align-items:center}.pr .opt{flex:1;text-align:left}.pr button.x{width:48px;flex:none;text-align:center;padding:0}
+</style></head><body>
+<div id="warn">⚠️ ต้องเปิดไฟล์นี้ด้วย Chrome/Edge/Safari โดยตรง ในพรีวิวแชตการเรียก API และดาวน์โหลดอาจใช้ไม่ได้</div>
+<div class="top"><h1>✨ AI Cartoon Studio</h1><span class="chip" id="kchip">🔑 ยังไม่ตั้งค่า</span></div>
+
+<section class="v on" id="v-home">
+<div class="mu">ตอบทีละข้อ เลือกจากภาพตัวอย่าง แล้วให้ AI ทำบท เสียง และวิดีโอให้ในหน้าเดียว</div>
+<h2>1. โหมด</h2><div class="row" id="q-mode"></div>
+<h2>2. แนวเรื่อง</h2><div class="row" id="q-genre"></div>
+<h2>3. ความยาว</h2><div class="row" id="q-len"></div>
+<h2>4. สไตล์ภาพ</h2><div class="grid" id="q-style"></div>
+<h2>5. การจบ</h2><div class="row" id="q-end"></div>
+<h2>6. หัวข้อ</h2>
+<textarea id="topic" placeholder="เช่น ทำไมคนถึงนอนไม่หลับตอนตีสาม"></textarea>
+<label>ข้อเท็จจริง/ตัวเลข/ข้อห้าม ที่ต้องใช้ (AI จะไม่แต่งเพิ่มเอง)</label>
+<textarea id="facts" placeholder="ไม่ใส่ก็ได้"></textarea>
+<button class="btn" onclick="gen()">🎬 สร้างการ์ตูน</button>
+<div id="prog" class="card" style="display:none"><div id="pt" class="mu"></div><div class="bar"><i id="pb"></i></div></div>
+<h2>📂 โปรเจกต์ที่บันทึกไว้</h2><div id="plist" class="mu">ยังไม่มี</div>
+</section>
+
+<section class="v" id="v-studio">
+<canvas id="cv" width="720" height="1280"></canvas>
+<div class="pr"><button class="opt" style="flex:none;width:64px;text-align:center" id="pp" onclick="toggle()">▶</button>
+<input type="range" id="sk" min="0" max="1" step="0.01" value="0" oninput="seek(+this.value)"><span class="mu" id="tm" style="width:80px">0:00</span></div>
+<div class="row"><button class="opt" onclick="mute=!mute;gain&&(gain.gain.value=mute?0:1);this.textContent=mute?'🔇':'🔊'">🔊</button>
+<label class="opt" style="margin:0">🎙 นำเข้าเสียง<input type="file" accept="audio/*" hidden onchange="impAudio(this.files[0])"></label>
+<button class="opt" onclick="saveDB(1)">💾 บันทึก</button><button class="opt" onclick="saveLocal()">📁 ลงเครื่อง</button></div>
+<div id="anote" class="mu" style="margin:8px 0"></div>
+<select id="exres"><option value="720">720p (เร็ว ประหยัดแรม)</option><option value="1080">1080p (ใช้ RAM/CPU มาก)</option></select><button class="btn" id="xb" onclick="exp()">🎞 สร้างวิดีโอ MP4</button>
+<div id="xp" class="card" style="display:none"><div id="xt" class="mu"></div><div class="bar"><i id="xbar"></i></div></div>
+<div id="res"></div>
+</section>
+
+<section class="v" id="v-proj"><h2>💾 พื้นที่เก็บข้อมูล</h2><div class="card mu" id="stg">กำลังตรวจ…</div>
+<div class="row"><button class="opt" onclick="persist()">ขอพื้นที่ถาวร</button><button class="opt" onclick="pickDir()">📁 เลือกโฟลเดอร์</button><button class="opt" onclick="bak()">⬇️ Backup</button><label class="opt" style="margin:0">⬆️ Restore<input type="file" accept=".json" hidden onchange="rest(this.files[0])"></label></div>
+<div id="dirn" class="mu" style="margin:8px 0">ยังไม่ได้เลือกโฟลเดอร์ (ใช้ดาวน์โหลดปกติ)</div>
+<h2>📂 โปรเจกต์ทั้งหมด</h2><div id="plist2"></div></section>
+<section class="v" id="v-set"><h2>🔑 OpenRouter API Key</h2><div id="apist" class="card mu">API: ยังไม่ได้ตรวจ</div>
+<input id="key" type="password" placeholder="sk-or-...">
+<label><input type="checkbox" id="rem" style="width:auto;margin:0 8px 0 0" onchange="$('remw').style.display=this.checked?'block':'none'">จำ Key บนเครื่องนี้ (Remember Key on This Device)</label>
+<div id="remw" class="mu" style="display:none;color:#fbbf24;margin:6px 0">⚠️ การเก็บ Key ในเบราว์เซอร์ไม่ใช่ Vault ที่ปลอดภัย ใครใช้เครื่องนี้ก็อ่านได้ ค่าเริ่มต้นเก็บเฉพาะ Session (ปิดแท็บแล้วหาย)</div>
+<div class="row"><button class="opt" onclick="saveCfg()">เพิ่ม/เปลี่ยน Key</button><button class="opt" onclick="tKey()">ตรวจ Key</button><button class="opt" onclick="delKey()">ลบ Key</button></div>
+<h2>🧠 โมเดลเขียนบท</h2>
+<label><input type="checkbox" id="shp" style="width:auto;margin:0 8px 0 0" onchange="fillSel()">แสดงโมเดลเสียเงินด้วย</label>
+<select id="llmsel" onchange="$('llm').value=this.value;mbadge()"></select>
+<input id="llm" placeholder="หรือกรอก Model ID เอง" oninput="mbadge()">
+<div id="lb" class="mu"></div>
+<div class="row"><button class="opt" onclick="loadModels()">โหลดรายการโมเดล</button><button class="opt" onclick="tLLM()">ทดสอบสมอง</button></div><div id="s1" class="mu" style="margin:8px 0"></div>
+<h2>🎙 เสียงพากย์ (TTS)</h2>
+<label>ผู้ให้บริการ</label><select id="prov" onchange="provSet()"><option value="heygen">HeyGen Voice 1 Turbo (free)</option><option value="fish">Fish Audio S2.1 Pro (free)</option><option value="custom">กำหนดเอง</option></select>
+<select id="tmsel" onchange="$('tm2').value=this.value;mbadge()"></select>
+<label>Model ID เสียง</label><input id="tm2" oninput="mbadge()">
+<label>Base URL (ต่อท้ายด้วย /audio/speech)</label><input id="tb">
+<label>API Key เสียง (ว่าง = ใช้ Key OpenRouter)</label><input id="tk" type="password">
+<label>Voice (ตามที่โมเดลรองรับ)</label><input id="vo">
+<label>Response Format</label><select id="rf"><option value="mp3">MP3</option><option value="pcm">PCM (แปลงเป็น WAV 24kHz)</option></select>
+<div class="row"><button class="opt" onclick="saveCfg();tTTS()">ทดสอบเสียง</button></div><div id="s2" class="mu" style="margin:8px 0"></div>
+<button class="btn" onclick="saveCfg()">บันทึกการตั้งค่า</button></section>
+
+<nav><button class="on" onclick="go('home')" id="n-home"><span>🏠</span>สร้าง</button><button onclick="go('studio')" id="n-studio"><span>🎬</span>วิดีโอ</button><button onclick="go('proj')" id="n-proj"><span>📂</span>โปรเจกต์</button><button onclick="go('set')" id="n-set"><span>⚙️</span>ตั้งค่า</button></nav>
+<div id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id),W=720,H=1280;let K=1,PID=null,LASTV=null,ABext='mp3';
+if(self!==top)$('warn').style.display='block';
+const toast=m=>{const e=$('toast');e.textContent=m;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',3800)};
+function go(v){['home','studio','set'].forEach(k=>{$('v-'+k).classList.toggle('on',k==v);$('n-'+k).classList.toggle('on',k==v)});scrollTo(0,0)}
+/* ---- styles ---- */
+const ST={
+bright:{n:'สว่างสดใส',e:'🧪',t:'#6ee7ff',b:'#fff2b0',g:'#ffd166',sk:'#2a9d8f',ac:'#ff5c7a',hi:'#ffe14d'},
+night:{n:'ห้องกลางคืนอบอุ่น',e:'🌃',t:'#1b1340',b:'#5b3fb0',g:'#2a1d57',sk:'#140d33',ac:'#8b5cf6',hi:'#ffc98a'},
+cinema:{n:'สืบสวนโทนภาพยนตร์',e:'🎬',t:'#ff9a6b',b:'#3b3a6e',g:'#23233f',sk:'#15152b',ac:'#2f4b7c',hi:'#ffd23f'},
+shrine:{n:'ศาลเจ้า/สยองความเชื่อ',e:'🕯',t:'#0b0604',b:'#4a1d08',g:'#1a0d06',sk:'#080402',ac:'#b91c1c',hi:'#ffb347'},
+street:{n:'ย่านร้านค้าไทย',e:'🏪',t:'#8fd3ff',b:'#fff0d4',g:'#e9c46a',sk:'#6aa6c9',ac:'#e76f51',hi:'#ffe14d'},
+cute:{n:'การ์ตูนน่ารัก',e:'🐣',t:'#ffd1f0',b:'#c9f1ff',g:'#b6f2c3',sk:'#f4a6d7',ac:'#ff6fb5',hi:'#ffe14d'},
+dark:{n:'Dark Cinematic',e:'🌑',t:'#06060a',b:'#1d1a2e',g:'#0d0c16',sk:'#0a0912',ac:'#475569',hi:'#fde047'},
+clay:{n:'ลุคดินน้ำมัน 2.5D',e:'🧸',t:'#cdeccf',b:'#fbe3b8',g:'#e6b98a',sk:'#a8d5ba',ac:'#e07a5f',hi:'#ffd166'}};
+const OPT={mode:[['story','🎭 เล่าเรื่อง'],['explain','📊 ให้ความรู้'],['mix','✨ ผสม']],genre:[['ตลก','😂 ตลก'],['ลึกลับสยองขวัญ','👻 ลึกลับ'],['ดราม่าซึ้ง','🥲 ดราม่า'],['สืบสวนตื่นเต้น','🔍 สืบสวน'],['ให้ความรู้','💡 ความรู้']],
+len:[[30,'⚡ 30 วิ'],[60,'⏱ 60 วิ'],[90,'🎞 90 วิ']],end:[['twist','🌀 หักมุม'],['summary','📌 สรุปข้อคิด'],['next','▶️ ตอนต่อไป'],['cta','💬 ชวนคอมเมนต์']]};
+const SEL={mode:'story',genre:'ตลก',len:60,style:'bright',end:'twist'};
+function draw(){for(const k in OPT)$('q-'+k).innerHTML=OPT[k].map(o=>`<button class="opt ${SEL[k]==o[0]?'on':''}" onclick="SEL['${k}']=${typeof o[0]=='number'?o[0]:`'${o[0]}'`};draw()">${o[1]}</button>`).join('');
+$('q-style').innerHTML=Object.entries(ST).map(([k,s])=>`<button class="tile ${SEL.style==k?'on':''}" style="background:linear-gradient(160deg,${s.t},${s.b} 70%,${s.g})" onclick="SEL.style='${k}';draw()"><i>${s.e}</i><b>${s.n}</b><small>${k.toUpperCase()}</small></button>`).join('')}
+draw();
+/* ---- config ---- */
+const DEF={key:'',llm:'nvidia/nemotron-3.5-super-vl:free',prov:'heygen',tm:'heygen/heygen-voice-1-turbo:free',tb:'https://openrouter.ai/api/v1',tk:'',vo:''};
+let C={...DEF,...JSON.parse(localStorage.getItem('acs_cfg')||'{}')};
+const PM={heygen:'heygen/heygen-voice-1-turbo:free',fish:'fish-audio/s2.1-pro-free:free'};
+function loadCfg(){$('key').value=C.key;$('llm').value=C.llm;$('prov').value=C.prov;$('tm2').value=C.tm;$('tb').value=C.tb;$('tk').value=C.tk;$('vo').value=C.vo;chip()}
+function provSet(){const p=$('prov').value;if(PM[p])$('tm2').value=PM[p]}
+function saveCfg(){C={key:$('key').value.trim(),llm:$('llm').value.trim(),prov:$('prov').value,tm:$('tm2').value.trim(),tb:$('tb').value.trim(),tk:$('tk').value.trim(),vo:$('vo').value.trim()};localStorage.setItem('acs_cfg',JSON.stringify(C));chip();toast('บันทึกแล้ว ✓')}
+function chip(){const e=$('kchip');e.textContent=C.key?'🔑 มี Key แล้ว':'🔑 ยังไม่ตั้งค่า';e.className='chip '+(C.key?'ok':'')}
+const S=(id,ok,m)=>{$(id).innerHTML=`<span class="${ok?'ok':'er'}">${ok?'✓':'✗'} ${m}</span>`};
+async function tKey(){saveCfg();try{const r=await fetch('https://openrouter.ai/api/v1/auth/key',{headers:{Authorization:'Bearer '+C.key}});const j=await r.json();if(!r.ok)throw Error(j.error?.message||r.status);S('s1',1,'Key ใช้ได้ '+(j.data?.label||''))}catch(e){S('s1',0,'Key ไม่ผ่าน: '+e.message)}}
+async function tLLM(){saveCfg();$('s1').textContent='กำลังทดสอบ…';try{const t=await chat([{role:'user',content:'ตอบคำเดียวว่า ok'}],60);S('s1',1,'สมองตอบกลับได้: '+t.slice(0,40))}catch(e){S('s1',0,e.message)}}
+async function tTTS(){saveCfg();$('s2').textContent='กำลังทดสอบ…';try{const ab=await tts('สวัสดีครับ ทดสอบเสียง');const u=URL.createObjectURL(new Blob([ab]));new Audio(u).play().catch(()=>{});S('s2',1,'ได้ไฟล์เสียง '+Math.round(ab.byteLength/1024)+' KB')}catch(e){S('s2',0,e.message)}}
+async function chat(m,max=4500){if(!C.key)throw Error('ยังไม่ได้ใส่ OpenRouter Key');const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+C.key,'Content-Type':'application/json','X-Title':'AI Cartoon Studio'},body:JSON.stringify({model:C.llm,messages:m,temperature:.8,max_tokens:max})});const j=await r.json().catch(()=>({}));if(!r.ok)throw Error((j.error?.message||'HTTP '+r.status));return j.choices?.[0]?.message?.content||''}
+async function tts(text){const k=C.tk||C.key;if(!k)throw Error('ไม่มี API Key เสียง');const r=await fetch(C.tb.replace(/\/$/,'')+'/audio/speech',{method:'POST',headers:{Authorization:'Bearer '+k,'Content-Type':'application/json'},body:JSON.stringify({model:C.tm,input:text,voice:C.vo||undefined,response_format:'mp3'})});if(!r.ok){let m='';try{m=(await r.json()).error?.message}catch(_){}throw Error('เสียง HTTP '+r.status+' '+(m||''))}return await r.arrayBuffer()}
+/* ---- generate script ---- */
+const NS={30:6,60:9,90:13},NC={30:400,60:650,90:1000};
+function sysPrompt(){return`คุณเป็นผู้กำกับและนักเขียนบทวิดีโอแอนิเมชันภาษาไทยแนวตั้ง ตอบเป็น JSON ล้วนเท่านั้น ห้ามมีคำอธิบาย ห้ามมี markdown
+กฎ: ห้ามแต่งข้อเท็จจริง ตัวเลข งานวิจัย ชื่อบุคคลจริง ที่ผู้ใช้ไม่ได้ให้ ถ้าเป็นสมมติให้บอกในบท
+บทพากย์ภาษาไทยธรรมชาติ Hook ใน 1-3 วินาทีแรก ใช้ "," หยุดสั้น "." หยุดยาว ประโยคไม่เกิน 60 ตัวอักษร แต่ละฉากจบด้วย "."
+จำนวนฉาก ${NS[SEL.len]} ฉาก รวมประมาณ ${NC[SEL.len]} ตัวอักษร ฉากสุดท้ายต้องมี card type "end" ตามรูปแบบการจบ
+สคีมา: {"title":"","characters":[{"id":"C1","name":"","skin":"#hex","hair":"#hex","hairStyle":"short|long|bun","shirt":"#hex","glasses":false}],
+"scenes":[{"narration":"","mood":"day|dusk|night|dark|room","actors":[{"char":"C1","x":0.5,"pose":"idle|talk|scared|cheer|think|walk","face":"happy|sad|scared|surprised|neutral|smirk","flip":false}],
+"card":null หรือ {"type":"text|bignumber|list|end","text":"","label":"","items":[],"badge":"","at":"คำในบทที่การ์ดโผล่"},"fx":"none|rain|snow|sparkles|fog","hl":["คำสำคัญที่อยู่ในบทตรงตัว"]}]}
+ตัวละคร 1-3 ตัว ต่างกันชัด x ระหว่าง 0.2-0.8 หนึ่งฉากไม่เกิน 2 ตัว ตัวเลขในการ์ดต้องมาจากบทหรือข้อมูลผู้ใช้เท่านั้น สลับฉากตัวละครกับการ์ด`}
+function parseJ(t){t=t.replace(/```json|```/g,'');const a=t.indexOf('{'),b=t.lastIndexOf('}');if(a<0||b<0)throw Error('AI ไม่ส่ง JSON กลับมา');return JSON.parse(t.slice(a,b+1))}
+function norm(d){if(!d.scenes?.length)throw Error('ไม่มีฉากในผลลัพธ์');d.characters=d.characters?.length?d.characters:[{id:'C1',name:'ตัวเอก',skin:'#f1c27d',hair:'#3b2a20',hairStyle:'short',shirt:'#6366f1'}];
+d.scenes.forEach(s=>{s.narration=String(s.narration||'').trim();s.actors=(s.actors||[]).slice(0,2).map(a=>({...a,x:Math.min(.88,Math.max(.12,a.x??.5))}));s.hl=s.hl||[];s.mood=s.mood||'night'});return d}
+let P=null;
+function prog(t,p){$('prog').style.display='block';$('pt').textContent=t;$('pb').style.width=p+'%'}
+async function gen(){const tp=$('topic').value.trim();if(!tp)return toast('ใส่หัวข้อก่อน');if(!C.key){toast('ใส่ OpenRouter Key ที่หน้าตั้งค่าก่อน');return go('set')}
+stop();try{prog('✍️ AI กำลังเขียนบทและออกแบบตัวละคร…',15);
+const u=`โหมด:${SEL.mode} แนว:${SEL.genre} ความยาว:${SEL.len} วินาที การจบ:${SEL.end}\nหัวข้อ: ${tp}\nข้อมูลที่ให้มา: ${$('facts').value||'ไม่มี'}`;
+const raw=await chat([{role:'system',content:sysPrompt()},{role:'user',content:u}]);P=norm(parseJ(raw));P.style=SEL.style;P.end=SEL.end;
+prog('🎙 กำลังสร้างเสียงพากย์…',55);AB=null;ABraw=null;let note='';
+try{ABraw=await tts(P.scenes.map(s=>s.narration).join('\n'));AB=await actx().decodeAudioData(ABraw.slice(0));}catch(e){note='⚠️ สร้างเสียงอัตโนมัติไม่สำเร็จ ('+e.message+') ใช้เวลาประมาณ ลองนำเข้าไฟล์เสียงเองได้'}
+$('anote').textContent=note;prog('🎬 กำลังจัดจังหวะ…',90);build();PID=null;LASTV=null;await saveDB();$('pt').textContent='เสร็จแล้ว';$('pb').style.width='100%';go('studio');cur=0;frame();toast('พร้อมดูตัวอย่าง')}catch(e){prog('❌ '+e.message,0);toast(e.message)}}
+/* ---- audio / timeline ---- */
+let AC,gain,src,AB=null,ABraw=null,mix=null,env=[],T=[],total=1,mute=false,playing=false,t0=0,cur=0;
+const actx=()=>AC||(AC=new (window.AudioContext||window.webkitAudioContext)());
+async function impAudio(f){if(!f||!P)return toast('สร้างเรื่องก่อน');try{ABraw=await f.arrayBuffer();AB=await actx().decodeAudioData(ABraw.slice(0));$('anote').textContent='นำเข้าเสียงแล้ว ✓';stop();build();ABext=(f.name.split('.').pop()||'mp3').toLowerCase();saveDB();frame()}catch(e){toast('ไฟล์เสียงนี้อ่านไม่ได้ ลองแปลงเป็น MP3/WAV')}}
+function build(){const sc=P.scenes,w=sc.map(s=>Math.max(8,s.narration.replace(/\s/g,'').length)),sw=w.reduce((a,b)=>a+b,0),lead=.4,hold=2.6;let ss=0,se=sw/11;env=[];mix=null;
+if(AB){const d=AB.getChannelData(0),sr=AB.sampleRate,st=Math.floor(sr*.02),n=Math.floor(d.length/st),e=[];for(let i=0;i<n;i++){let a=0;for(let j=0;j<st;j++){const v=d[i*st+j];a+=v*v}e.push(Math.sqrt(a/st))}
+const so=[...e].sort((a,b)=>a-b),th=so[Math.floor(so.length*.95)]*.08;let f=e.findIndex(v=>v>th),l=e.length-1-[...e].reverse().findIndex(v=>v>th);if(f<0){f=0;l=e.length-1}
+ss=f*.02;se=(l+1)*.02;env=e.map(v=>Math.min(1,v/(so[Math.floor(so.length*.95)]||1)));env.off=ss}
+const sp=se-ss;total=lead+sp+hold;let a=lead;T=sc.map((s,i)=>{const b=i==sc.length-1?total:a+sp*w[i]/sw,o={a,b,s};a=b;return o});
+if(AB){const sr=AB.sampleRate,m=actx().createBuffer(2,Math.ceil(total*sr),sr),off=Math.floor(lead*sr),from=Math.floor(ss*sr),len=Math.min(AB.length-from,m.length-off);for(let c=0;c<2;c++){m.copyToChannel(AB.getChannelData(Math.min(c,AB.numberOfChannels-1)).subarray(from,from+len),c,off)}mix=m}
+$('sk').max=total;}
+function mouthAt(t){if(!env.length)return .5+.5*Math.sin(t*14);const i=Math.floor((t-.4)/.02);return env[i]??0}
+function play(from){stop();const a=actx();a.resume();gain=a.createGain();gain.gain.value=mute?0:1;gain.connect(a.destination);if(mix){src=a.createBufferSource();src.buffer=mix;src.connect(gain);src.start(0,from)}t0=a.currentTime-from;playing=true;$('pp').textContent='⏸';loop()}
+function stop(){playing=false;try{src&&src.stop()}catch(_){}src=null;$('pp').textContent='▶'}
+function toggle(){if(!P)return;playing?stop():play(cur>=total-.05?0:cur)}
+function seek(v){cur=v;playing?play(v):frame()}
+function loop(){if(!playing)return;cur=AC.currentTime-t0;if(cur>=total){cur=total;stop();frame();return}frame();requestAnimationFrame(loop)}
+function frame(){if(!P)return;R(cv.getContext('2d'),cur);$('sk').value=cur;const m=Math.floor(cur/60),s=Math.floor(cur%60);$('tm').textContent=m+':'+String(s).padStart(2,'0')+' / '+Math.floor(total/60)+':'+String(Math.floor(total%60)).padStart(2,'0')}
+const cv=$('cv');
+/* ---- renderer ---- */
+const F=(w,s)=>`${w} ${s}px Prompt,Kanit,"Noto Sans Thai",sans-serif`;
+const rr=(x,a,b,w,h,r)=>{x.beginPath();x.roundRect(a,b,w,h,r)};
+const ez=k=>1-Math.pow(1-Math.min(1,Math.max(0,k)),3);
+function rnd(s){return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function wrap(x,tx,mw){const sg=new Intl.Segmenter?new Intl.Segmenter('th',{granularity:'word'}):null,ws=sg?[...sg.segment(tx)].map(z=>({w:z.segment,i:z.index})):[...tx].map((c,i)=>({w:c,i}));const L=[];let l=[],lw=0;for(const o of ws){const m=x.measureText(o.w).width;if(lw+m>mw&&l.length){L.push({ws:l,w:lw});l=[];lw=0}l.push(o);lw+=m}if(l.length)L.push({ws:l,w:lw});return L}
+function bgDraw(x,s,pl,t){const m=s.mood,M={day:['#7fd0ff','#e8f8ff'],dusk:['#ff9a6b','#53407f'],dark:['#07070d','#1b1730']},cp=M[m]&&!['shrine','dark'].includes(P.style)?M[m]:[pl.t,pl.b];
+let g=x.createLinearGradient(0,0,0,H*.64);g.addColorStop(0,cp[0]);g.addColorStop(1,cp[1]);x.fillStyle=g;x.fillRect(-60,-60,W+120,H);
+const dk=['night','dark','dusk'].includes(m)||['night','shrine','dark','cinema'].includes(P.style),r=rnd(7);
+if(dk){x.fillStyle='#fff';for(let i=0;i<40;i++){x.globalAlpha=.3+.5*Math.abs(Math.sin(t*2+i));x.fillRect(r()*W,r()*H*.4,2.5,2.5)}x.globalAlpha=1;x.fillStyle=pl.hi;x.beginPath();x.arc(W*.8,H*.12,44,0,7);x.fill()}
+if(m!='room'&&P.style!='shrine'){x.fillStyle=pl.sk;let px=-20;while(px<W+20){const bw=60+r()*70,bh=120+r()*280;x.fillRect(px,H*.64-bh,bw,bh);if(dk){x.fillStyle=pl.hi;for(let k=0;k<6;k++)if(r()>.5)x.fillRect(px+8+(k%3)*(bw/3.4),H*.64-bh+20+Math.floor(k/3)*50,10,16);x.fillStyle=pl.sk}px+=bw+6}}
+if(P.style=='shrine'||m=='room'){const rg=x.createRadialGradient(W/2,H*.4,10,W/2,H*.4,W*.8);rg.addColorStop(0,pl.hi+'aa');rg.addColorStop(1,'#0000');x.fillStyle=rg;x.fillRect(0,0,W,H)}
+g=x.createLinearGradient(0,H*.64,0,H);g.addColorStop(0,pl.g);g.addColorStop(1,'#0006');x.fillStyle=g;x.fillRect(-60,H*.64,W+120,H)}
+function fxDraw(x,f,t){const r=rnd(3);if(f=='rain'){x.strokeStyle='#cfe8ffaa';x.lineWidth=2;for(let i=0;i<70;i++){const px=r()*W,py=((r()*H+t*900)%H);x.beginPath();x.moveTo(px,py);x.lineTo(px-6,py+24);x.stroke()}}
+else if(f=='snow'){x.fillStyle='#fff';for(let i=0;i<60;i++){x.beginPath();x.arc((r()*W+Math.sin(t+i)*20)%W,(r()*H+t*80)%H,3+r()*3,0,7);x.fill()}}
+else if(f=='sparkles'){x.fillStyle='#ffe14d';for(let i=0;i<24;i++){x.globalAlpha=Math.abs(Math.sin(t*3+i));x.fillRect(r()*W,r()*H*.7,6,6)}x.globalAlpha=1}
+else if(f=='fog'){const g=x.createLinearGradient(0,H*.4,0,H*.7);g.addColorStop(0,'#fff0');g.addColorStop(.5,'#ffffff44');g.addColorStop(1,'#fff0');x.fillStyle=g;x.fillRect(Math.sin(t*.5)*30-30,H*.4,W+60,H*.3)}}
+function charDraw(x,d,a,px,py,sc,t,mo){const fl=a.flip?-1:1;let bob=Math.sin(t*3)*4,jp=0,sh=0;if(a.pose=='cheer')jp=-Math.abs(Math.sin(t*5))*40;if(a.pose=='scared')sh=Math.sin(t*40)*3;if(a.pose=='walk')bob=-Math.abs(Math.sin(t*6))*10;
+x.save();x.translate(px,py);x.scale(sc,sc);x.fillStyle='#0004';x.beginPath();x.ellipse(0,0,90,16,0,0,7);x.fill();x.translate(sh,jp+bob);x.scale(fl,1);
+x.lineCap='round';x.lineJoin='round';const sw=a.pose=='walk'?Math.sin(t*6)*18:0;
+x.fillStyle='#2b2d42';rr(x,-42+sw,-110,36,110,16);x.fill();rr(x,6-sw,-110,36,110,16);x.fill();
+x.fillStyle=d.shirt||'#6366f1';rr(x,-62,-262,124,166,40);x.fill();x.fillStyle='#fff2';rr(x,-62,-262,40,166,30);x.fill();
+x.strokeStyle=d.shirt||'#6366f1';x.lineWidth=26;const arm=(sx,ex,ey)=>{x.beginPath();x.moveTo(sx,-235);x.lineTo(ex,ey);x.stroke();x.fillStyle=d.skin||'#f1c27d';x.beginPath();x.arc(ex,ey,15,0,7);x.fill()};
+const sa=Math.sin(t*3)*10;if(a.pose=='cheer'){arm(-62,-100,-340+sa);arm(62,100,-340-sa)}else if(a.pose=='scared'){arm(-62,-40,-190);arm(62,40,-190)}else if(a.pose=='think'){arm(-62,-82,-150);arm(62,25,-250)}else if(a.pose=='talk'){arm(-62,-84,-140);arm(62,96,-200+Math.sin(t*5)*30)}else{arm(-62,-82,-140+sa);arm(62,82,-140-sa)}
+x.fillStyle=d.skin||'#f1c27d';rr(x,-14,-290,28,34,10);x.fill();
+x.fillStyle=d.hair||'#333';const hs=d.hairStyle;if(hs=='long'){rr(x,-72,-380,144,170,50);x.fill()}if(hs=='bun'){x.beginPath();x.arc(0,-402,26,0,7);x.fill()}
+x.fillStyle=d.skin||'#f1c27d';x.beginPath();x.arc(0,-330,66,0,7);x.fill();
+x.fillStyle=d.hair||'#333';x.beginPath();x.arc(0,-340,68,Math.PI*1.05,Math.PI*1.95);x.fill();rr(x,-68,-345,136,24,10);x.fill();
+const f=a.face||'neutral',bl=(t%4)<.12;x.fillStyle='#1b1b2f';if(bl){x.fillRect(-32,-330,18,4);x.fillRect(14,-330,18,4)}else{x.beginPath();x.arc(-24,-328,(f=='surprised'||f=='scared')?9:7,0,7);x.arc(24,-328,(f=='surprised'||f=='scared')?9:7,0,7);x.fill()}
+x.strokeStyle='#1b1b2f';x.lineWidth=4;const ey=f=='angry'?[6,-6]:f=='sad'?[-6,6]:f=='scared'||f=='surprised'?[-6,-6]:[0,0];x.beginPath();x.moveTo(-38,-352+ey[0]);x.lineTo(-12,-352+ey[1]);x.moveTo(38,-352+ey[0]);x.lineTo(12,-352+ey[1]);x.stroke();
+const op=a.pose=='talk'?mo:(f=='surprised'||f=='scared')?.7:0;x.fillStyle='#7a1f2b';x.beginPath();
+if(op>.12){x.ellipse(0,-296,14,5+op*16,0,0,7);x.fill()}else{x.beginPath();if(f=='happy'||f=='smirk'){x.arc(0,-304,18,.1,Math.PI-.1)}else if(f=='sad'){x.arc(0,-290,16,Math.PI+.2,-.2)}else{x.moveTo(-14,-296);x.lineTo(14,-296)}x.stroke()}
+if(d.glasses){x.strokeStyle='#222';x.lineWidth=4;x.beginPath();x.arc(-24,-328,16,0,7);x.moveTo(40,-328);x.arc(24,-328,16,0,7);x.moveTo(-8,-328);x.lineTo(8,-328);x.stroke()}
+x.restore()}
+function cardDraw(x,c,k,pl,lt,last){x.save();x.globalAlpha=Math.min(1,k*1.4);x.translate(0,(1-k)*-70);const cx=W/2;x.textAlign='center';x.textBaseline='middle';
+const box=(y,h,col)=>{x.shadowColor='#0007';x.shadowBlur=30;x.shadowOffsetY=10;x.fillStyle=col||'#fff8ec';rr(x,cx-310,y,620,h,36);x.fill();x.shadowColor='#0000';x.fillStyle=pl.ac;rr(x,cx-310,y,16,h,8);x.fill()};
+if(c.type=='bignumber'){const m=String(c.text||'').match(/^([\d,.]+)(.*)$/);let tx=c.text||'';if(m){const v=parseFloat(m[1].replace(/,/g,'')),dec=(m[1].split('.')[1]||'').length,q=ez(lt/1.2);tx=(v*q).toFixed(dec).replace(/\B(?=(\d{3})+(?!\d))/g,',')+m[2]}box(150,290);x.fillStyle=pl.ac;x.font=F(800,tx.length>10?72:104);x.fillText(tx,cx,270);x.fillStyle='#333';x.font=F(600,38);x.fillText(c.label||'',cx,380)}
+else if(c.type=='list'){const it=(c.items||[]).slice(0,5),h=60+it.length*66+(c.text?70:0);box(130,h);let y=170;x.textAlign='left';if(c.text){x.fillStyle=pl.ac;x.font=F(800,40);x.fillText(c.text,cx-270,y+10);y+=70}x.font=F(600,36);it.forEach((s,i)=>{x.fillStyle=pl.ac;x.beginPath();x.arc(cx-268,y+34+i*66,9,0,7);x.fill();x.fillStyle='#222';x.fillText(s,cx-240,y+34+i*66)})}
+else if(c.type=='end'){const g=x.createLinearGradient(0,300,0,700);g.addColorStop(0,pl.ac);g.addColorStop(1,'#1b1340');x.shadowColor='#000a';x.shadowBlur=40;x.fillStyle=g;rr(x,cx-320,300,640,420,44);x.fill();x.shadowColor='#0000';
+if(c.badge){x.fillStyle=pl.hi;rr(x,cx-110,336,220,54,27);x.fill();x.fillStyle='#222';x.font=F(800,30);x.fillText(c.badge,cx,364)}x.fillStyle='#fff';x.font=F(800,54);x.textBaseline='top';x.strokeStyle='#0004';
+const L=wrap(x,c.text||'',560).slice(0,4);L.forEach((l,i)=>{let px=cx-l.w/2;x.textAlign='left';l.ws.forEach(o=>{x.fillText(o.w,px,420+i*68);px+=x.measureText(o.w).width})});x.textAlign='center';x.fillStyle=pl.hi;x.font=F(600,32);x.textBaseline='middle';x.fillText(c.label||'',cx,676)}
+else{x.font=F(800,48);const L=wrap(x,c.text||'',540).slice(0,4),h=50+L.length*64;box(150,h);x.fillStyle='#222';x.textAlign='left';x.textBaseline='middle';L.forEach((l,i)=>{let px=cx-l.w/2+8;l.ws.forEach(o=>{x.fillText(o.w,px,150+45+i*64+28);px+=x.measureText(o.w).width})})}
+x.restore()}
+function subDraw(x,s,lt,dur,pl){const cl=s.narration.split(/(?<=[,.\n])\s*/).map(z=>z.trim()).filter(Boolean);if(!cl.length)return;const ws=cl.map(z=>z.length),tw=ws.reduce((a,b)=>a+b,0);let a=0,idx=cl.length-1;for(let i=0;i<cl.length;i++){a+=ws[i]/tw*dur;if(lt<a){idx=i;break}}
+const tx=cl[idx].replace(/[,.]+$/,'');x.font=F(800,52);x.textBaseline='top';x.lineJoin='round';const L=wrap(x,tx,620).slice(0,2),lh=72,h=L.length*lh+36,y0=H*.74-h/2;
+x.fillStyle='#000a';rr(x,W/2-340,y0,680,h,28);x.fill();const hr=[];s.hl.forEach(h=>{const i=tx.indexOf(h);if(i>=0)hr.push([i,i+h.length])});
+L.forEach((l,i)=>{let px=W/2-l.w/2;x.textAlign='left';l.ws.forEach(o=>{const hot=hr.some(r=>o.i>=r[0]&&o.i<r[1]);x.fillStyle=hot?pl.hi:'#fff';x.fillText(o.w,px,y0+18+i*lh);px+=x.measureText(o.w).width})})}
+function R(x,t){const pl=ST[P.style];x.setTransform(K,0,0,K,0,0);x.clearRect(0,0,W,H);let i=T.findIndex(o=>t<o.b);if(i<0)i=T.length-1;const S=T[i],s=S.s,lt=Math.max(0,t-S.a),dur=S.b-S.a,p=Math.min(1,lt/dur);
+const tt=P.style=='clay'?Math.floor(t*12)/12:t;x.save();const z=1+.05*p;x.translate(W/2,H/2);x.scale(z,z);x.translate(-W/2,-H/2);bgDraw(x,s,pl,tt);
+const n=s.actors.length;s.actors.forEach(a=>{const d=P.characters.find(c=>c.id==a.char)||P.characters[0];charDraw(x,d,a,a.x*W,H*.66,n>1?.8:1,tt,mouthAt(t))});fxDraw(x,s.fx,tt);x.restore();
+const v=x.createRadialGradient(W/2,H/2,H*.3,W/2,H/2,H*.75);v.addColorStop(0,'#0000');v.addColorStop(1,P.style=='shrine'||P.style=='dark'?'#000c':'#0006');x.fillStyle=v;x.fillRect(0,0,W,H);
+if(i==0&&t<3.2){x.globalAlpha=ez(t/.4)*ez((3.2-t)/.4);x.fillStyle=pl.ac;rr(x,40,70,W-80,110,30);x.fill();x.fillStyle='#fff';x.font=F(800,42);x.textAlign='center';x.textBaseline='middle';x.fillText(P.title||'',W/2,125,W-120);x.globalAlpha=1}
+const c=s.card;if(c){let at=.3;if(c.at){const ix=s.narration.indexOf(c.at);if(ix>=0)at=ix/s.narration.length*dur}if(lt>=at)cardDraw(x,c,ez((lt-at)/.4),pl,lt-at)}
+subDraw(x,s,lt,dur,pl);const fo=Math.max(0,.25-lt)/.25*.8;if(fo>0&&i>0){x.fillStyle=`rgba(0,0,0,${fo})`;x.fillRect(0,0,W,H)}}
+/* ---- export MP4 ---- */
+async function loadMB(){for(const u of['https://cdn.jsdelivr.net/npm/mediabunny@1/+esm','https://esm.sh/mediabunny@1']){try{return await Promise.race([import(u),new Promise((_,j)=>setTimeout(()=>j(Error('timeout')),15000))])}catch(e){}}throw Error('โหลดไลบรารี MP4 ไม่ได้ (ตรวจอินเทอร์เน็ต)')}
+async function exp(){if(!P)return toast('ยังไม่มีวิดีโอ');if(!AB&&!confirm('ยังไม่มีเสียงพากย์ วิดีโอจะไม่มีเสียง ทำต่อไหม?'))return;stop();actx().resume();
+if(typeof VideoEncoder=='undefined'){$('res').innerHTML='<div class="card er">เบราว์เซอร์นี้ยังสร้าง MP4 ไม่ได้ กรุณาอัปเดต Chrome/Safari รุ่นใหม่ หรือดาวน์โหลดเสียงด้านล่าง</div>'+dlA();return}
+$('xp').style.display='block';$('xb').disabled=true;$('res').innerHTML='';const xp=(m,p)=>{$('xt').textContent=m;$('xbar').style.width=p+'%'};
+try{await document.fonts.load('800 40px Prompt');xp('กำลังตรวจโค้ดเดก…',2);K=await pickRes();xp('กำลังโหลดตัวเข้ารหัส…',2);const mb=await loadMB();try{navigator.wakeLock?.request('screen')}catch(_){}
+const o=new mb.Output({format:new mb.Mp4OutputFormat(),target:new mb.BufferTarget()}),cz=document.createElement('canvas');cz.width=W*K;cz.height=H*K;const x=cz.getContext('2d');
+const vs=new mb.CanvasSource(cz,{codec:'avc',bitrate:mb.QUALITY_HIGH});o.addVideoTrack(vs,{frameRate:30});let as=null;
+if(mix){const ac=(await mb.canEncodeAudio?.('aac'))!==false?'aac':'opus';as=new mb.AudioBufferSource({codec:ac,bitrate:128e3});o.addAudioTrack(as)}
+await o.start();if(as){await as.add(mix);as.close()}const N=Math.ceil(total*30);
+for(let i=0;i<N;i++){R(x,i/30);await vs.add(i/30,1/30);if(i%8==0){xp(`กำลังสร้างวิดีโอ ${i}/${N} เฟรม (อย่าสลับแอป)`,5+i/N*93);await new Promise(requestAnimationFrame)}}
+vs.close();await o.finalize();const bl=new Blob([o.target.buffer],{type:'video/mp4'});LASTV=bl;const u=URL.createObjectURL(bl);xp('ตรวจไฟล์…',99);
+const vv=document.createElement('video');vv.src=u;const dd=await new Promise(r=>{vv.onloadedmetadata=()=>r(vv.duration);setTimeout(()=>r(null),10000)});
+let hasA=null;try{const inp=new mb.Input({formats:mb.ALL_FORMATS,source:new mb.BlobSource(bl)});hasA=!!(await inp.getPrimaryAudioTrack())}catch(_){}const info=dd?`ตรวจแล้ว: ความยาว ${dd.toFixed(1)} วินาที, ${(bl.size/1048576).toFixed(1)} MB, เสียง: ${hasA===true?'พบ Audio Track ✓':hasA===false?(mix?'❌ ไม่พบ Audio Track':'ไม่มี'):(mix?'ตรวจอัตโนมัติไม่ได้ กรุณากดเล่นฟัง':'ไม่มี')}`:'ตรวจอัตโนมัติไม่ได้ กรุณากดเล่นดู';
+xp('✓ เสร็จแล้ว',100);const fn=(P.title||'video').replace(/[^\wก-๙]+/g,'_')+'.mp4',file=new File([bl],fn,{type:'video/mp4'});
+$('res').innerHTML=`<video controls playsinline src="${u}"></video><div class="mu" style="margin:8px 0">${info}</div><div class="row"><button class="btn" id="b-sh">📤 บันทึก/แชร์</button><a class="btn" href="${u}" download="${fn}" style="text-align:center;line-height:54px;text-decoration:none">⬇️ ดาวน์โหลด MP4</a></div>${dlA()}<div class="mu">ถ้าไม่เริ่มดาวน์โหลด: แตะค้างที่วิดีโอ หรือกด ⋮ ที่ตัวเล่นแล้วเลือก Download (iPhone ใช้ปุ่มแชร์ → บันทึกวิดีโอ)</div>`;
+$('b-sh').onclick=()=>navigator.canShare?.({files:[file]})?navigator.share({files:[file]}).catch(()=>{}):toast('เครื่องนี้ไม่รองรับแชร์ไฟล์ ใช้ปุ่มดาวน์โหลดแทน')}
+catch(e){xp('❌ '+e.message,0);$('res').innerHTML='<div class="card er">'+e.message+'</div>'+dlA()}
+K=1;LASTV&&saveDB();$('xb').disabled=false}
+function dlA(){if(!ABraw)return'';window._au=URL.createObjectURL(new Blob([ABraw]));return`<a class="btn s" href="${_au}" download="voice.mp3" style="text-align:center;line-height:54px;text-decoration:none">🎙 ดาวน์โหลดเสียงพากย์</a>`}
+/* ---- projects ---- */
+const LS=()=>JSON.parse(localStorage.getItem('acs_proj')||'[]');
+function saveP(){if(!P)return;const l=LS();l.unshift({d:P,at:Date.now()});localStorage.setItem('acs_proj',JSON.stringify(l.slice(0,12)));plist();toast('บันทึกโปรเจกต์แล้ว (ไม่รวมเสียง)')}
+function plist(){const l=LS();$('plist').innerHTML=l.length?l.map((p,i)=>`<div class="pr" style="margin:6px 0"><button class="opt" onclick="openP(${i})">${ST[p.d.style]?.e||'🎬'} ${p.d.title||'ไม่มีชื่อ'}</button><button class="opt x" onclick="delP(${i})">×</button></div>`).join(''):'ยังไม่มี'}
+function openP(i){P=LS()[i].d;AB=null;ABraw=null;stop();build();$('anote').textContent='เปิดโปรเจกต์แล้ว นำเข้าเสียงหรือสร้างใหม่เพื่อให้มีเสียงพากย์';cur=0;go('studio');frame()}
+function delP(i){const l=LS();l.splice(i,1);localStorage.setItem('acs_proj',JSON.stringify(l));plist()}
+loadCfg();plist();
+</script><script>
+/* ===== v2: local-first upgrade (overrides) ===== */
+const esc=s=>String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
+let FREE=new Set(),MODELS=[],PAIDOK=new Set(),DIR=null;
+const emsg=(s,m)=>({401:'API Key ไม่ถูกต้องหรือถูกยกเลิก',402:'เครดิต/วงเงินไม่พอ',404:'ไม่พบโมเดลหรือ endpoint นี้ (อาจเลิกให้บริการแล้ว)',429:'โดน Rate limit/โควตาเต็ม รอสักครู่หรือเลือกโมเดลอื่น (ระบบไม่ลองซ้ำเอง)'}[s]||(s>=500?'ผู้ให้บริการมีปัญหา (HTTP '+s+') ลองใหม่ภายหลัง':'HTTP '+s))+(m?' — '+m:'');
+function api(ok,m){$('apist').innerHTML=ok?'<span class=ok>● API Connected</span>':'<span class=er>● '+esc(m||'API Disconnected')+'</span>'}
+const isFree=id=>id.endsWith(':free')||FREE.has(id);
+function gate(id){if(!isFree(id)&&!PAIDOK.has(id)){if(!confirm('โมเดล '+id+' ไม่ใช่โมเดลฟรี (หรือไม่ทราบสถานะ) อาจมีค่าใช้จ่าย ใช้ต่อไหม?'))throw Error('ยกเลิก: ไม่ใช้โมเดลที่อาจเสียเงิน');PAIDOK.add(id)}}
+const sec=(n,v,rem)=>{sessionStorage.removeItem(n);localStorage.removeItem(n);v&&(rem?localStorage:sessionStorage).setItem(n,v)};
+function loadCfg(){const c=JSON.parse(localStorage.getItem('acs_cfg')||'{}'),g=n=>localStorage.getItem(n)||sessionStorage.getItem(n)||'';C={...DEF,...c,key:g('acs_key'),tk:g('acs_tk'),rf:c.rf||'mp3'};
+$('key').value=C.key;$('rem').checked=!!localStorage.getItem('acs_key');$('llm').value=C.llm;$('prov').value=C.prov;$('tm2').value=C.tm;$('tb').value=C.tb;$('tk').value=C.tk;$('vo').value=C.vo;$('rf').value=C.rf;chip()}
+function saveCfg(){const rem=$('rem').checked;C={...C,key:$('key').value.trim(),llm:$('llm').value.trim(),prov:$('prov').value,tm:$('tm2').value.trim(),tb:$('tb').value.trim(),tk:$('tk').value.trim(),vo:$('vo').value.trim(),rf:$('rf').value};sec('acs_key',C.key,rem);sec('acs_tk',C.tk,rem);const{key,tk,...pub}=C;localStorage.setItem('acs_cfg',JSON.stringify(pub));chip();mbadge();toast('บันทึกแล้ว ✓')}
+function delKey(){C.key='';C.tk='';$('key').value='';$('tk').value='';sec('acs_key','',0);sec('acs_tk','',0);chip();api(0,'ลบ Key แล้ว');toast('ลบ Key แล้ว')}
+function chip(){const e=$('kchip');e.textContent=C.key?'🔑 มี Key':'🔑 ยังไม่ตั้งค่า';e.className='chip '+(C.key?'ok':'')}
+function provSet(){const p=$('prov').value;if(PM[p])$('tm2').value=PM[p];mbadge()}
+async function tKey(){saveCfg();try{const r=await fetch('https://openrouter.ai/api/v1/auth/key',{headers:{Authorization:'Bearer '+C.key}});const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(emsg(r.status,j.error?.message));const d=j.data||{};S('s1',1,`Key ใช้ได้ ${d.label||''} | ใช้ไป ${d.usage??'?'} | วงเงิน ${d.limit??'ไม่จำกัด'}${d.is_free_tier?' | Free tier':''}`);api(1)}catch(e){S('s1',0,e.message);api(0,e.message)}}
+async function loadModels(){try{let r=await fetch('https://openrouter.ai/api/v1/models?output_modalities=all');if(!r.ok)r=await fetch('https://openrouter.ai/api/v1/models');const j=await r.json();MODELS=j.data||[];FREE=new Set(MODELS.filter(m=>+m.pricing?.prompt==0&&+m.pricing?.completion==0).map(m=>m.id));fillSel();mbadge();S('s1',1,'โหลดรายการโมเดล '+MODELS.length+' รายการ')}catch(e){S('s1',0,'โหลดรายการโมเดลไม่ได้: '+e.message+' (กรอก Model ID เองได้)')}}
+function fillSel(){const sp=$('shp').checked,mo=m=>m.architecture?.output_modalities||[],op=m=>`<option value="${esc(m.id)}">${esc(m.name||m.id)} [${FREE.has(m.id)?'FREE':'PAID'}]</option>`;
+$('llmsel').innerHTML='<option value="">— เลือกโมเดลเขียนบท —</option>'+MODELS.filter(m=>mo(m).includes('text')&&(sp||FREE.has(m.id))).map(op).join('');
+$('tmsel').innerHTML='<option value="">— เลือกโมเดลเสียง (ถ้า API ระบุ) —</option>'+MODELS.filter(m=>mo(m).some(x=>/speech|audio/.test(x))&&(sp||FREE.has(m.id))).map(op).join('')}
+function mbadge(){const f=id=>!id?'-':(isFree(id)?'<span class=ok>FREE</span>':'<span class=er>PAID/ไม่ทราบ (ขอยืนยันก่อนใช้)</span>'),nf=id=>MODELS.length&&id&&!MODELS.some(m=>m.id==id)?' ⚠️ ไม่พบในรายการ (อาจเลิกให้บริการ)':'';$('lb').innerHTML='Text: '+f($('llm').value)+nf($('llm').value)+' · เสียง: '+f($('tm2').value)+nf($('tm2').value)}
+async function chat(m,max=4500){if(!C.key)throw Error('ยังไม่ได้ใส่ OpenRouter Key');gate(C.llm);const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+C.key,'Content-Type':'application/json','X-Title':'AI Cartoon Studio'},body:JSON.stringify({model:C.llm,messages:m,temperature:.8,max_tokens:max})});const j=await r.json().catch(()=>({}));if(!r.ok){const e=emsg(r.status,j.error?.message);api(0,e);throw Error(e)}api(1);return j.choices?.[0]?.message?.content||''}
+function wav(p,sr=24000){const h=new DataView(new ArrayBuffer(44)),w=(o,s)=>[...s].forEach((c,i)=>h.setUint8(o+i,c.charCodeAt(0)));w(0,'RIFF');h.setUint32(4,36+p.byteLength,true);w(8,'WAVEfmt ');h.setUint32(16,16,true);h.setUint16(20,1,true);h.setUint16(22,1,true);h.setUint32(24,sr,true);h.setUint32(28,sr*2,true);h.setUint16(32,2,true);h.setUint16(34,16,true);w(36,'data');h.setUint32(40,p.byteLength,true);const o=new Uint8Array(44+p.byteLength);o.set(new Uint8Array(h.buffer));o.set(new Uint8Array(p),44);return o.buffer}
+async function tts(text){const k=C.tk||C.key;if(!k)throw Error('ไม่มี API Key เสียง');gate(C.tm);const rf=C.rf||'mp3';const r=await fetch(C.tb.replace(/\/$/,'')+'/audio/speech',{method:'POST',headers:{Authorization:'Bearer '+k,'Content-Type':'application/json'},body:JSON.stringify({model:C.tm,input:text,voice:C.vo||undefined,response_format:rf})});
+if(!r.ok){let m='';try{m=(await r.json()).error?.message}catch(_){}throw Error(emsg(r.status,m))}
+const ct=r.headers.get('content-type')||'';if(!/^audio\//.test(ct)&&!/octet-stream/.test(ct))throw Error('ผู้ให้บริการไม่ได้ส่งไฟล์เสียงกลับมา (Content-Type: '+ct+')');
+let ab=await r.arrayBuffer();if(rf=='pcm'){ab=wav(ab);ABext='wav'}else ABext='mp3';return ab}
+function dlA(){if(!ABraw)return'';const e=ABext||'mp3';window._au=URL.createObjectURL(new Blob([ABraw],{type:e=='wav'?'audio/wav':'audio/mpeg'}));return`<a class="btn s" href="${_au}" download="voice.${e}" style="text-align:center;line-height:54px;text-decoration:none">🎙 ดาวน์โหลดเสียงพากย์ (.${e})</a>`}
+async function pickRes(){const want=$('exres').value=='1080'?1.5:1;for(const k of want==1.5?[1.5,1]:[1]){for(const c of['avc1.42001f','avc1.4d001f','avc1.640028','avc1.640032']){try{const s=await VideoEncoder.isConfigSupported({codec:c,width:W*k,height:H*k,bitrate:4e6});if(s.supported){if(k!=want)toast('เครื่องไม่รองรับ 1080p ลดเป็น 720p');return k}}catch(_){}}}throw Error('เครื่องนี้ไม่มี H.264 encoder สำหรับ MP4 ลองอัปเดต Chrome/Safari หรือดาวน์โหลดเสียงแยก')}
+/* IndexedDB */
+const DBP=new Promise((ok,no)=>{const r=indexedDB.open('acs',1);r.onupgradeneeded=()=>r.result.createObjectStore('p',{keyPath:'id'});r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
+async function dbx(m,f){const d=await DBP;return new Promise((ok,no)=>{const t=d.transaction('p',m),q=f(t.objectStore('p'));t.oncomplete=()=>ok(q&&q.result);t.onerror=()=>no(t.error)})}
+async function saveDB(m){if(!P)return;try{PID=PID||crypto.randomUUID();let th=null;try{frame();const c=document.createElement('canvas');c.width=90;c.height=160;c.getContext('2d').drawImage(cv,0,0,90,160);th=c.toDataURL('image/jpeg',.6)}catch(_){}
+navigator.storage?.persist?.();await dbx('readwrite',s=>s.put({id:PID,title:P.title||'ไม่มีชื่อ',data:P,audio:ABraw,ext:ABext,video:LASTV,thumb:th,at:Date.now()}));plist();stor();m&&toast('บันทึกลงฐานข้อมูลในเครื่องแล้ว ✓')}catch(e){toast('บันทึกฐานข้อมูลไม่ได้: '+e.message)}}
+async function plist(){let l=[];try{l=await dbx('readonly',s=>s.getAll())}catch(e){}l.sort((a,b)=>b.at-a.at);const hh=l.length?l.map(p=>`<div class="card pr"><img src="${p.thumb||''}" width="45" height="80" style="border-radius:8px;background:#000"><div style="flex:1"><b>${esc(p.title)}</b><div class="mu">${p.audio?'🎙 มีเสียง ':''}${p.video?'🎞 '+(p.video.size/1048576).toFixed(1)+' MB':''}</div><div class="row"><button class="opt" onclick="openP('${p.id}')">เปิด</button>${p.video?`<button class="opt" onclick="delV('${p.id}')">ลบวิดีโอ</button>`:''}<button class="opt" onclick="delP('${p.id}')">🗑 ลบ</button></div></div></div>`).join(''):'ยังไม่มี';['plist','plist2'].forEach(i=>$(i)&&($(i).innerHTML=hh))}
+async function openP(id){const p=await dbx('readonly',s=>s.get(id));if(!p)return;stop();P=p.data;PID=id;ABraw=p.audio||null;ABext=p.ext||'mp3';LASTV=p.video||null;AB=null;if(ABraw){try{AB=await actx().decodeAudioData(ABraw.slice(0))}catch(e){toast('เสียงที่บันทึกไว้อ่านไม่ได้')}}build();$('anote').textContent=AB?'โหลดเสียงจากฐานข้อมูลในเครื่องแล้ว ✓':'โปรเจกต์นี้ยังไม่มีเสียง ใช้ "นำเข้าเสียง"';
+if(LASTV){const u=URL.createObjectURL(LASTV);$('res').innerHTML=`<video controls playsinline src="${u}"></video><a class="btn" href="${u}" download="video.mp4" style="text-align:center;line-height:54px;text-decoration:none">⬇️ ดาวน์โหลด MP4</a>`}else $('res').innerHTML='';cur=0;go('studio');frame()}
+async function delP(id){if(!confirm('ลบโปรเจกต์นี้ (รวมเสียงและวิดีโอ)?'))return;await dbx('readwrite',s=>s.delete(id));if(PID==id)PID=null;plist();stor()}
+async function delV(id){const p=await dbx('readonly',s=>s.get(id));p.video=null;await dbx('readwrite',s=>s.put(p));if(PID==id)LASTV=null;plist();stor()}
+async function stor(){const e=$('stg');if(!navigator.storage?.estimate){e.textContent='ตรวจพื้นที่ไม่ได้ในเบราว์เซอร์นี้';return}const s=await navigator.storage.estimate(),p=navigator.storage.persisted?await navigator.storage.persisted():false,u=s.usage||0,q=s.quota||1,mb=n=>(n/1048576).toFixed(1)+' MB';e.innerHTML=`ใช้ไป ${mb(u)} / โควตาโดยประมาณ ${mb(q)} (ว่าง ~${mb(q-u)})<br>Persistent: ${p?'✓ ได้รับแล้ว':'ยังไม่ได้ขอ'}${u/q>.8?'<br><span class=er>⚠️ พื้นที่ใกล้เต็ม ลบโปรเจกต์/วิดีโอเก่า</span>':''}`}
+async function persist(){const ok=await navigator.storage?.persist?.();toast(ok?'ขอพื้นที่ถาวรสำเร็จ':'เบราว์เซอร์ไม่อนุญาตหรือไม่รองรับ');stor()}
+const b2s=ab=>{let s='';const u=new Uint8Array(ab);for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s)};
+async function bak(){const l=await dbx('readonly',s=>s.getAll());const o=l.map(p=>({...p,audio:p.audio?b2s(p.audio):null,video:null}));const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(o)],{type:'application/json'}));a.download='acs-backup.json';document.body.appendChild(a);a.click();a.remove();toast('Backup นี้ไม่รวมไฟล์วิดีโอ (สร้างใหม่ได้)')}
+async function rest(f){if(!f)return;try{const o=JSON.parse(await f.text());for(const p of o)await dbx('readwrite',s=>s.put({...p,audio:p.audio?Uint8Array.from(atob(p.audio),c=>c.charCodeAt(0)).buffer:null}));plist();stor();toast('กู้คืน '+o.length+' โปรเจกต์ ✓')}catch(e){toast('ไฟล์ Backup ไม่ถูกต้อง')}}
+/* save to folder */
+async function pickDir(){if(!window.showDirectoryPicker)return toast('เบราว์เซอร์นี้ไม่รองรับเลือกโฟลเดอร์ ใช้ดาวน์โหลดแทน');try{DIR=await showDirectoryPicker({mode:'readwrite'});$('dirn').textContent='โฟลเดอร์ปลายทาง: '+DIR.name}catch(e){}}
+async function toDir(n,b){const o={mode:'readwrite'};if((await DIR.queryPermission(o))!=='granted'&&(await DIR.requestPermission(o))!=='granted')return false;const w=await(await DIR.getFileHandle(n,{create:true})).createWritable();await w.write(b);await w.close();return true}
+async function saveLocal(){if(!P)return;const n=(P.title||'project').replace(/[^\wก-๙]+/g,'_'),fs=[[n+'.project.json',new Blob([JSON.stringify(P)],{type:'application/json'})]];ABraw&&fs.push([n+'.voice.'+ABext,new Blob([ABraw])]);LASTV&&fs.push([n+'.mp4',LASTV]);
+if(DIR){try{for(const f of fs)if(!(await toDir(...f)))throw Error('ไม่ได้รับอนุญาตเขียนโฟลเดอร์');return toast('บันทึกลงโฟลเดอร์แล้ว ✓')}catch(e){toast(e.message+' ใช้ดาวน์โหลดแทน')}}
+for(const[nm,b]of fs){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=nm;document.body.appendChild(a);a.click();a.remove();await new Promise(r=>setTimeout(r,500))}}
+function go(v){['home','studio','proj','set'].forEach(k=>{$('v-'+k).classList.toggle('on',k==v);$('n-'+k).classList.toggle('on',k==v)});scrollTo(0,0);if(v=='proj'){plist();stor()}}
+loadCfg();loadModels();plist();stor();
+</script></body></html>
