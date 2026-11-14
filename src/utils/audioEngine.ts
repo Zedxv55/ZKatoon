@@ -685,8 +685,10 @@ export async function mergeSceneAudioRecordsToBuffer(
   const decodedPerScene: Array<AudioBuffer | null> = [];
   const sceneDurations: number[] = [];
 
-  for (const sc of scenes) {
-    const rec = sc.id ? sceneAudioMap[sc.id] : undefined;
+  for (let sceneIndex = 0; sceneIndex < scenes.length; sceneIndex++) {
+    const sc = scenes[sceneIndex];
+    const sceneId = sc.id || `S${sceneIndex + 1}`;
+    const rec = sceneAudioMap[sceneId];
     if (!rec) {
       decodedPerScene.push(null);
       sceneDurations.push(sc.manualDurationSec || Math.max(1.8, sc.narration.length / 11));
@@ -697,9 +699,9 @@ export async function mergeSceneAudioRecordsToBuffer(
       const buf = await ctx.decodeAudioData(ab.slice(0));
       decodedPerScene.push(buf);
       sceneDurations.push(buf.duration);
-    } catch {
-      decodedPerScene.push(null);
-      sceneDurations.push(rec.durationSec || 2.5);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`ถอดรหัสเสียงฉาก ${sceneId} ไม่สำเร็จ — กรุณาสร้างเสียงฉากนี้ใหม่ (${reason})`);
     }
   }
 

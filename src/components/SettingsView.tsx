@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -62,6 +62,11 @@ export function SettingsView({
   const [scriptTestMsg, setScriptTestMsg] = useState<string | null>(null);
   const [ttsTestMsg, setTtsTestMsg] = useState<string | null>(null);
   const [testingTts, setTestingTts] = useState(false);
+  const [ttsTestAudioUrl, setTtsTestAudioUrl] = useState<string | null>(null);
+
+  useEffect(() => () => {
+    if (ttsTestAudioUrl) URL.revokeObjectURL(ttsTestAudioUrl);
+  }, [ttsTestAudioUrl]);
 
   async function handleSaveAllKeys() {
     if (isLocked) {
@@ -99,15 +104,39 @@ export function SettingsView({
 
   async function handleTestTtsProvider() {
     setTestingTts(true);
-    setTtsTestMsg('กำลังดึงรายการเสียงจริงจากผู้ให้บริการ…');
+    setTtsTestMsg('กำลังโหลด Voice และสร้างเสียงทดสอบภาษาไทยจริง…');
     try {
       const adapter = getTtsAdapter(settings.ttsProvider);
       const voices = await adapter.fetchVoices(settings, draftSecrets);
-      setTtsTestMsg(`เชื่อมต่อ ${TTS_PROVIDERS_META[settings.ttsProvider].name} สำเร็จ — พบ ${voices.length} เสียงจริง`);
-      onNotify(`เชื่อมต่อ ${TTS_PROVIDERS_META[settings.ttsProvider].name} สำเร็จ`);
+      if (!voices.length) throw new Error('ผู้ให้บริการไม่ส่งรายการ Voice กลับมา');
+      const selectedVoice = voices.find((voice) => voice.id === settings.ttsVoiceId) || voices[0];
+      const sample = await adapter.synthesize({
+        text: 'สวัสดีครับ นี่คือเสียงทดสอบภาษาไทยของ ZKatoon ขอให้คุณสนุกกับการสร้างการ์ตูน',
+        voiceId: selectedVoice.id,
+        voiceName: selectedVoice.name,
+        emotion: 'neutral',
+        speed: 1,
+        styleInstruction: 'พูดภาษาไทยให้เป็นธรรมชาติ ชัดเจน และเว้นจังหวะอย่างเหมาะสม',
+        dictionary: [],
+        settings,
+        secrets: draftSecrets,
+      });
+      if (!sample.audioBlob.size || !Number.isFinite(sample.durationSec) || sample.durationSec <= 0) {
+        throw new Error('ผู้ให้บริการส่งไฟล์เสียงว่างหรือความยาวไม่ถูกต้อง');
+      }
+      const nextUrl = URL.createObjectURL(sample.audioBlob);
+      setTtsTestAudioUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return nextUrl;
+      });
+      setTtsTestMsg('สร้างเสียงทดสอบจริงสำเร็จ — ' + selectedVoice.name + ' · ' + sample.durationSec.toFixed(2) + ' วินาที · ' + Math.round(sample.audioBlob.size / 1024) + ' KB');
+      onNotify('สร้างเสียงทดสอบจาก ' + TTS_PROVIDERS_META[settings.ttsProvider].name + ' สำเร็จ');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setTtsTestMsg(`ทดสอบไม่สำเร็จ: ${msg}`);
+      setTtsTestAudioUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return null;
+      });
+      setTtsTestMsg('ทดสอบเสียงไม่สำเร็จ: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setTestingTts(false);
     }
@@ -483,13 +512,16 @@ export function SettingsView({
         </div>
 
         {ttsTestMsg && (
-          <div className="flex items-center gap-2 text-xs font-medium text-violet-200">
-            {ttsTestMsg.includes('สำเร็จ') ? (
-              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" aria-hidden="true" />
-            ) : (
-              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" aria-hidden="true" />
-            )}
-            <span>{ttsTestMsg}</span>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-xs font-medium text-violet-200">
+              {ttsTestMsg.includes('สร้างเสียงทดสอบจริงสำเร็จ') ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" aria-hidden="true" />
+              ) : (
+                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" aria-hidden="true" />
+              )}
+              <span>{ttsTestMsg}</span>
+            </div>
+            {ttsTestAudioUrl && <audio controls preload="metadata" src={ttsTestAudioUrl} className="w-full" />}
           </div>
         )}
       </section>

@@ -185,6 +185,9 @@ function classifyHttpError(provider: string, status: number, detail: string): Er
   if (status === 401 || status === 403) {
     return new Error(`${provider}: API Key ไม่ถูกต้องหรือไม่มีสิทธิ์ (HTTP ${status})`);
   }
+  if (status === 402) {
+    return new Error(`${provider}: เครดิตหรือวงเงินไม่เพียงพอ (HTTP 402) — ตรวจสอบ Billing ของผู้ให้บริการ`);
+  }
   if (status === 429) {
     return new Error(`${provider}: โควตาหรือ Rate Limit เต็มชั่วคราว (HTTP 429)`);
   }
@@ -531,11 +534,9 @@ export const OpenAiTtsAdapter: TtsProviderAdapter = {
     if (!secrets.openAiKey?.trim()) {
       throw new Error('กรุณาใส่ OpenAI API Key ก่อนตรวจสอบสิทธิ์รายการเสียง');
     }
-    // Verify key against OpenAI models endpoint so we don't fake active access
-    const resp = await fetch('https://api.openai.com/v1/models', {
-      headers: { Authorization: `Bearer ${secrets.openAiKey.trim()}` },
-    });
-    if (!resp.ok) throw classifyHttpError('OpenAI', resp.status, await resp.text().catch(() => ''));
+    // The voice list is a documented static choice for the selected TTS model.
+    // Do not require /v1/models permission here: actual TTS entitlement is
+    // verified by the real /v1/audio/speech request in the test/generation flow.
     return OPENAI_VOICES;
   },
 

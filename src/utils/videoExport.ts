@@ -369,14 +369,19 @@ async function encodeWithWebmFallback(params: {
 
   const stream = offscreen.captureStream(fps);
   let audioCtx: AudioContext | null = null;
+  let audioSource: AudioBufferSourceNode | null = null;
   if (renderedAudio) {
     audioCtx = new AudioContext();
+    await audioCtx.resume().catch(() => {});
+    if (audioCtx.state !== 'running') {
+      await audioCtx.close().catch(() => {});
+      throw new Error('AudioContext ยังไม่พร้อมสำหรับ WebM — กรุณากด Export โดยตรงจากหน้าเว็บ หรือใช้ MP4 หากเครื่องรองรับ');
+    }
     const dest = audioCtx.createMediaStreamDestination();
-    const src = audioCtx.createBufferSource();
-    src.buffer = renderedAudio;
-    src.connect(dest);
+    audioSource = audioCtx.createBufferSource();
+    audioSource.buffer = renderedAudio;
+    audioSource.connect(dest);
     dest.stream.getAudioTracks().forEach((tr) => stream.addTrack(tr));
-    src.start(0);
   }
 
   const chunks: BlobPart[] = [];
@@ -391,6 +396,8 @@ async function encodeWithWebmFallback(params: {
   });
 
   recorder.start(250);
+  // Start audio only after the recorder is active to avoid trimming the first samples.
+  audioSource?.start(0);
   const startMs = performance.now();
   const frameIntervalMs = 1000 / fps;
   let elapsed = 0;
