@@ -11,36 +11,46 @@ import {
   canEncodeAudio,
 } from 'mediabunny';
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
-import type { CartoonProject, PauseCandidate, TimelineSegment } from '../types/cartoon';
+import { ThreeSceneStage } from '../engine3d/ThreeSceneStage';
+import type {
+  CartoonProject,
+  ExportFps,
+  PauseCandidate,
+  PerformancePreset,
+  SceneAudioRecord,
+  TimelineSegment,
+} from '../types/cartoon';
 import { renderOfflineMixBuffer } from './audioEngine';
-import { CANVAS_H, CANVAS_W, renderCartoonFrame } from './canvasRenderer';
+import { renderCartoonFrame } from './canvasRenderer';
 
 export interface ExportPreflightStatus {
   hasVoiceover: boolean;
   audioCtxRunning: boolean;
   webCodecsSupported: boolean;
+  webmSupported: boolean;
   selectedWidth: number;
   selectedHeight: number;
   selectedScale: number;
   selectedBitrate: number;
   selectedVideoCodec: string | null;
   selectedAudioCodec: 'aac' | 'pcm-s16' | null;
-  libraryName: 'mediabunny' | 'mp4-muxer';
+  libraryName: 'mediabunny' | 'mp4-muxer' | 'webm-mediarecorder';
   fatalError: string | null;
 }
 
 export interface VideoExportResult {
   blob: Blob;
   mimeType: string;
-  ext: 'mp4';
+  ext: 'mp4' | 'webm';
   durationSec: number | null;
   hasAudioTrack: boolean | null;
   audioVerifiedStatus: 'detected' | 'silent' | 'unverifiable';
   usedScale: number;
   usedWidth: number;
   usedHeight: number;
+  usedFps: ExportFps;
   usedCodec: string;
-  usedAudioCodec: 'aac' | 'pcm-s16';
+  usedAudioCodec: 'aac' | 'pcm-s16' | 'opus';
   downscaleWarning: string | null;
 }
 
@@ -56,10 +66,10 @@ interface ResStep {
 function getResolutionLadder(want1080: boolean): ResStep[] {
   const steps: ResStep[] = [];
   if (want1080) {
-    steps.push({ scale: 1.5, width: 1080, height: 1920, bitrate: 6_000_000 });
+    steps.push({ scale: 1.5, width: 1080, height: 1920, bitrate: 6_500_000 });
   }
   steps.push({ scale: 1, width: 720, height: 1280, bitrate: 4_000_000 });
-  steps.push({ scale: 0.75, width: 540, height: 960, bitrate: 2_500_000 });
+  steps.push({ scale: 0.75, width: 540, height: 960, bitrate: 2_400_000 });
   return steps;
 }
 
@@ -70,21 +80,28 @@ export async function runExportPreflight(params: {
 }): Promise<ExportPreflightStatus> {
   const webCodecsSupported = typeof VideoEncoder !== 'undefined';
   const audioCtxRunning = params.audioCtxState === 'running';
+  const webmSupported =
+    typeof MediaRecorder !== 'undefined' &&
+    (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ||
+      MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ||
+      MediaRecorder.isTypeSupported('video/webm'));
 
   if (!webCodecsSupported) {
     return {
       hasVoiceover: params.hasVoiceover,
       audioCtxRunning,
       webCodecsSupported: false,
+      webmSupported,
       selectedWidth: 720,
       selectedHeight: 1280,
       selectedScale: 1,
       selectedBitrate: 4_000_000,
       selectedVideoCodec: null,
       selectedAudioCodec: null,
-      libraryName: 'mediabunny',
-      fatalError:
-        'เบราว์เซอร์เครื่องนี้ยังสร้างไฟล์ MP4 ไม่ได้ กรุณาอัปเดตเบราว์เซอร์ (Chrome/Safari รุ่นใหม่ล่าสุด) หรือเปิดด้วยเครื่องที่ใหม่กว่า',
+      libraryName: webmSupported ? 'webm-mediarecorder' : 'mediabunny',
+      fatalError: webmSupported
+        ? null
+        : 'เบราว์เซอร์เครื่องนี้ไม่รองรับทั้ง WebCodecs MP4 และ MediaRecorder WebM',
     };
   }
 
@@ -107,7 +124,7 @@ export async function runExportPreflight(params: {
           break;
         }
       } catch {
-        // try next
+        // next
       }
     }
     if (chosenStep) break;
@@ -121,14 +138,15 @@ export async function runExportPreflight(params: {
       hasVoiceover: params.hasVoiceover,
       audioCtxRunning,
       webCodecsSupported: true,
+      webmSupported,
       selectedWidth: 720,
       selectedHeight: 1280,
       selectedScale: 1,
       selectedBitrate: 4_000_000,
       selectedVideoCodec: null,
       selectedAudioCodec,
-      libraryName: 'mediabunny',
-      fatalError: 'ไม่พบตัวเข้ารหัส H.264 (AVC) ที่รองรับบนเครื่องนี้ สำหรับสร้าง MP4',
+      libraryName: webmSupported ? 'webm-mediarecorder' : 'mediabunny',
+      fatalError: webmSupported ? null : 'ไม่พบตัวเข้ารหัส H.264 (AVC) หรือ WebM บนเครื่องนี้',
     };
   }
 
@@ -136,6 +154,7 @@ export async function runExportPreflight(params: {
     hasVoiceover: params.hasVoiceover,
     audioCtxRunning,
     webCodecsSupported: true,
+    webmSupported,
     selectedWidth: chosenStep.width,
     selectedHeight: chosenStep.height,
     selectedScale: chosenStep.scale,
@@ -147,42 +166,24 @@ export async function runExportPreflight(params: {
   };
 }
 
+interface FrameRendererFn {
+  (timeSec: number, offscreen: HTMLCanvasElement, ctx: CanvasRenderingContext2D, scale: number): void;
+}
+
 async function encodeWithMediabunny(params: {
   offscreen: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
-  project: CartoonProject;
-  timeline: TimelineSegment[];
+  renderAt: FrameRendererFn;
   totalDuration: number;
-  envelope: number[];
-  leadSec: number;
-  speechStartSec: number;
-  pauseCandidates: PauseCandidate[];
-  subtitleScale: 'normal' | 'large';
-  cineEnabled: boolean;
   renderedAudio: AudioBuffer | null;
   step: ResStep;
+  fps: ExportFps;
   useAac: boolean;
   signal?: AbortSignal;
   onProgress: (message: string, percent: number) => void;
 }): Promise<Blob> {
-  const {
-    offscreen,
-    ctx,
-    project,
-    timeline,
-    totalDuration,
-    envelope,
-    leadSec,
-    speechStartSec,
-    pauseCandidates,
-    subtitleScale,
-    cineEnabled,
-    renderedAudio,
-    step,
-    useAac,
-    signal,
-    onProgress,
-  } = params;
+  const { offscreen, ctx, renderAt, totalDuration, renderedAudio, step, fps, useAac, signal, onProgress } =
+    params;
 
   const output = new Output({
     format: new Mp4OutputFormat(),
@@ -193,7 +194,7 @@ async function encodeWithMediabunny(params: {
     codec: 'avc',
     bitrate: QUALITY_HIGH,
   });
-  output.addVideoTrack(videoSource, { frameRate: 30 });
+  output.addVideoTrack(videoSource, { frameRate: fps });
 
   let audioSource: AudioBufferSource | null = null;
   if (renderedAudio) {
@@ -210,28 +211,17 @@ async function encodeWithMediabunny(params: {
     audioSource.close();
   }
 
-  const fps = 30;
   const frameCount = Math.max(1, Math.ceil(totalDuration * fps));
   for (let i = 0; i < frameCount; i++) {
-    if (signal?.aborted) {
-      throw new Error('ยกเลิกการสร้างวิดีโอแล้ว');
-    }
-    renderCartoonFrame(ctx, project, timeline, i / fps, {
-      envelope,
-      leadSec,
-      speechStartSec,
-      scale: step.scale,
-      subtitleScale,
-      pauseCandidates,
-      cineEnabled,
-    });
+    if (signal?.aborted) throw new Error('ยกเลิกการสร้างวิดีโอแล้ว');
+    renderAt(i / fps, offscreen, ctx, step.scale);
     await videoSource.add(i / fps, 1 / fps);
-    if (i % 10 === 0 || i === frameCount - 1) {
+    if (i % 8 === 0 || i === frameCount - 1) {
       onProgress(
-        `กำลังเรนเดอร์ MP4 ${step.width}×${step.height} (${i + 1}/${frameCount} เฟรม)…`,
+        `กำลังเรนเดอร์ MP4 ${step.width}×${step.height} @ ${fps} FPS (${i + 1}/${frameCount})…`,
         Math.round(12 + ((i + 1) / frameCount) * 82)
       );
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }
 
@@ -245,56 +235,37 @@ async function encodeWithMediabunny(params: {
 async function encodeWithMp4Muxer(params: {
   offscreen: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
-  project: CartoonProject;
-  timeline: TimelineSegment[];
+  renderAt: FrameRendererFn;
   totalDuration: number;
-  envelope: number[];
-  leadSec: number;
-  speechStartSec: number;
-  pauseCandidates: PauseCandidate[];
-  subtitleScale: 'normal' | 'large';
-  cineEnabled: boolean;
   renderedAudio: AudioBuffer | null;
   step: ResStep;
+  fps: ExportFps;
   videoCodec: string;
   signal?: AbortSignal;
   onProgress: (message: string, percent: number) => void;
 }): Promise<Blob> {
-  const {
-    offscreen,
-    ctx,
-    project,
-    timeline,
-    totalDuration,
-    envelope,
-    leadSec,
-    speechStartSec,
-    pauseCandidates,
-    subtitleScale,
-    cineEnabled,
-    renderedAudio,
-    step,
-    videoCodec,
-    signal,
-    onProgress,
-  } = params;
+  const { offscreen, ctx, renderAt, totalDuration, renderedAudio, step, fps, videoCodec, signal, onProgress } =
+    params;
 
   const target = new ArrayBufferTarget();
   const hasAac = renderedAudio
-    ? (await AudioEncoder.isConfigSupported({
-        codec: 'mp4a.40.2',
-        numberOfChannels: 2,
-        sampleRate: renderedAudio.sampleRate,
-        bitrate: 128_000,
-      }).catch(() => ({ supported: false }))).supported
+    ? (
+        await AudioEncoder.isConfigSupported({
+          codec: 'mp4a.40.2',
+          numberOfChannels: 2,
+          sampleRate: renderedAudio.sampleRate,
+          bitrate: 128_000,
+        }).catch(() => ({ supported: false }))
+      ).supported
     : false;
 
   const muxer = new Muxer({
     target,
     video: { codec: 'avc', width: step.width, height: step.height },
-    audio: hasAac && renderedAudio
-      ? { codec: 'aac', numberOfChannels: 2, sampleRate: renderedAudio.sampleRate }
-      : undefined,
+    audio:
+      hasAac && renderedAudio
+        ? { codec: 'aac', numberOfChannels: 2, sampleRate: renderedAudio.sampleRate }
+        : undefined,
     fastStart: 'in-memory',
   });
 
@@ -309,7 +280,7 @@ async function encodeWithMp4Muxer(params: {
     width: step.width,
     height: step.height,
     bitrate: step.bitrate,
-    framerate: 30,
+    framerate: fps,
   });
 
   if (hasAac && renderedAudio) {
@@ -350,34 +321,25 @@ async function encodeWithMp4Muxer(params: {
     audioEncoder.close();
   }
 
-  const fps = 30;
   const frameCount = Math.max(1, Math.ceil(totalDuration * fps));
   for (let i = 0; i < frameCount; i++) {
     if (signal?.aborted) {
       videoEncoder.close();
       throw new Error('ยกเลิกการสร้างวิดีโอแล้ว');
     }
-    renderCartoonFrame(ctx, project, timeline, i / fps, {
-      envelope,
-      leadSec,
-      speechStartSec,
-      scale: step.scale,
-      subtitleScale,
-      pauseCandidates,
-      cineEnabled,
-    });
+    renderAt(i / fps, offscreen, ctx, step.scale);
     const frame = new VideoFrame(offscreen, {
       timestamp: Math.round((i / fps) * 1_000_000),
       duration: Math.round((1 / fps) * 1_000_000),
     });
-    videoEncoder.encode(frame, { keyFrame: i % 60 === 0 });
+    videoEncoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
     frame.close();
-    if (i % 10 === 0 || i === frameCount - 1) {
+    if (i % 8 === 0 || i === frameCount - 1) {
       onProgress(
-        `กำลังเรนเดอร์ MP4 สำรอง (${i + 1}/${frameCount} เฟรม)…`,
+        `กำลังเรนเดอร์ MP4 (Muxer) ${i + 1}/${frameCount} เฟรม…`,
         Math.round(12 + ((i + 1) / frameCount) * 82)
       );
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }
 
@@ -385,6 +347,72 @@ async function encodeWithMp4Muxer(params: {
   videoEncoder.close();
   muxer.finalize();
   return new Blob([target.buffer], { type: 'video/mp4' });
+}
+
+async function encodeWithWebmFallback(params: {
+  offscreen: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  renderAt: FrameRendererFn;
+  totalDuration: number;
+  renderedAudio: AudioBuffer | null;
+  step: ResStep;
+  fps: ExportFps;
+  signal?: AbortSignal;
+  onProgress: (message: string, percent: number) => void;
+}): Promise<Blob> {
+  const { offscreen, ctx, renderAt, totalDuration, renderedAudio, step, fps, signal, onProgress } = params;
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+    ? 'video/webm;codecs=vp9,opus'
+    : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+      ? 'video/webm;codecs=vp8,opus'
+      : 'video/webm';
+
+  const stream = offscreen.captureStream(fps);
+  let audioCtx: AudioContext | null = null;
+  if (renderedAudio) {
+    audioCtx = new AudioContext();
+    const dest = audioCtx.createMediaStreamDestination();
+    const src = audioCtx.createBufferSource();
+    src.buffer = renderedAudio;
+    src.connect(dest);
+    dest.stream.getAudioTracks().forEach((tr) => stream.addTrack(tr));
+    src.start(0);
+  }
+
+  const chunks: BlobPart[] = [];
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: step.bitrate });
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  };
+
+  const donePromise = new Promise<Blob>((resolve, reject) => {
+    recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+    recorder.onerror = () => reject(new Error('MediaRecorder WebM ล้มเหลว'));
+  });
+
+  recorder.start(250);
+  const startMs = performance.now();
+  const frameIntervalMs = 1000 / fps;
+  let elapsed = 0;
+
+  while (elapsed < totalDuration) {
+    if (signal?.aborted) {
+      recorder.stop();
+      await audioCtx?.close().catch(() => {});
+      throw new Error('ยกเลิกการสร้างวิดีโอแล้ว');
+    }
+    elapsed = (performance.now() - startMs) / 1000;
+    renderAt(Math.min(totalDuration, elapsed), offscreen, ctx, step.scale);
+    onProgress(
+      `กำลังบันทึก WebM สำรอง (${elapsed.toFixed(1)} / ${totalDuration.toFixed(1)} วิ)…`,
+      Math.round(12 + Math.min(1, elapsed / totalDuration) * 82)
+    );
+    await new Promise((r) => setTimeout(r, frameIntervalMs));
+  }
+
+  recorder.stop();
+  await audioCtx?.close().catch(() => {});
+  return donePromise;
 }
 
 export async function exportCartoonVideo(params: {
@@ -396,9 +424,13 @@ export async function exportCartoonVideo(params: {
   speechStartSec: number;
   pauseCandidates: PauseCandidate[];
   voiceBuffer: AudioBuffer | null;
+  sceneAudioMap?: Record<string, SceneAudioRecord>;
   enableBgmAndSfx: boolean;
   cineEnabled: boolean;
   want1080: boolean;
+  fps?: ExportFps;
+  performancePreset?: PerformancePreset;
+  forceFormat?: 'auto' | 'webm';
   subtitleScale: 'normal' | 'large';
   signal?: AbortSignal;
   onProgress: (message: string, percent: number) => void;
@@ -412,9 +444,13 @@ export async function exportCartoonVideo(params: {
     speechStartSec,
     pauseCandidates,
     voiceBuffer,
+    sceneAudioMap,
     enableBgmAndSfx,
     cineEnabled,
     want1080,
+    fps = 30,
+    performancePreset = 'high',
+    forceFormat = 'auto',
     subtitleScale,
     signal,
     onProgress,
@@ -428,8 +464,9 @@ export async function exportCartoonVideo(params: {
     audioCtxState: 'running',
     want1080,
   });
-  if (preflight.fatalError || !preflight.selectedVideoCodec) {
-    throw new Error(preflight.fatalError || 'เบราว์เซอร์ไม่รองรับ WebCodecs H.264 สำหรับ MP4');
+
+  if (preflight.fatalError) {
+    throw new Error(preflight.fatalError);
   }
 
   try {
@@ -440,7 +477,7 @@ export async function exportCartoonVideo(params: {
     // optional
   }
 
-  onProgress('กำลังผสมเสียงพากย์ เพลง และ SFX ด้วย OfflineAudioContext…', 6);
+  onProgress('กำลังผสมเสียงพากย์ เพลง และ SFX ด้วย OfflineAudioContext…', 5);
   const renderedAudio =
     voiceBuffer || enableBgmAndSfx
       ? await renderOfflineMixBuffer({
@@ -457,6 +494,7 @@ export async function exportCartoonVideo(params: {
         })
       : null;
 
+  const is3d = project.renderEngine !== '2d_paper';
   const fullLadder = getResolutionLadder(want1080);
   const startIdx = Math.max(
     0,
@@ -467,6 +505,12 @@ export async function exportCartoonVideo(params: {
   let finalBlob: Blob | null = null;
   let usedStep = candidates[0];
   let downscaleWarning: string | null = null;
+  let usedExt: 'mp4' | 'webm' = 'mp4';
+  let usedCodec = preflight.selectedVideoCodec || 'vp9';
+  let usedAudioCodec: VideoExportResult['usedAudioCodec'] =
+    preflight.selectedAudioCodec || 'aac';
+
+  const useWebmOnly = forceFormat === 'webm' || !preflight.selectedVideoCodec;
 
   for (let attempt = 0; attempt < Math.min(3, candidates.length); attempt++) {
     usedStep = candidates[attempt];
@@ -481,70 +525,139 @@ export async function exportCartoonVideo(params: {
     const ctx = offscreen.getContext('2d');
     if (!ctx) throw new Error('ไม่สามารถสร้าง Canvas Context ได้');
 
-    try {
-      finalBlob = await encodeWithMediabunny({
-        offscreen,
-        ctx,
-        project,
-        timeline,
-        totalDuration,
-        envelope,
-        leadSec,
-        speechStartSec,
-        pauseCandidates,
-        subtitleScale,
-        cineEnabled,
-        renderedAudio,
-        step: usedStep,
-        useAac: preflight.selectedAudioCodec === 'aac',
-        signal,
-        onProgress,
+    let stage3d: ThreeSceneStage | null = null;
+    if (is3d) {
+      stage3d = new ThreeSceneStage({
+        width: usedStep.width,
+        height: usedStep.height,
+        preset: performancePreset,
+        style3d: project.style3d,
       });
-      break;
-    } catch (err) {
-      if (signal?.aborted) throw err;
-      // Try mp4-muxer fallback at this resolution before downscaling
-      try {
-        finalBlob = await encodeWithMp4Muxer({
-          offscreen,
-          ctx,
-          project,
-          timeline,
-          totalDuration,
+      await stage3d.syncProjectAssets(project);
+    }
+
+    const renderAt: FrameRendererFn = (tSec, targetCanvas, targetCtx, scale) => {
+      if (is3d && stage3d) {
+        stage3d.renderFrameAt(project, timeline, tSec, {
           envelope,
           leadSec,
           speechStartSec,
-          pauseCandidates,
           subtitleScale,
+          sceneAudioMap,
+          target2dCanvas: targetCanvas,
+        });
+      } else {
+        renderCartoonFrame(targetCtx, project, timeline, tSec, {
+          envelope,
+          leadSec,
+          speechStartSec,
+          scale,
+          subtitleScale,
+          pauseCandidates,
           cineEnabled,
+        });
+      }
+    };
+
+    try {
+      if (useWebmOnly) {
+        if (!preflight.webmSupported) {
+          throw new Error('เบราว์เซอร์ไม่รองรับทั้ง H.264 MP4 และ WebM');
+        }
+        usedExt = 'webm';
+        usedCodec = 'vp8/vp9';
+        usedAudioCodec = 'opus';
+        finalBlob = await encodeWithWebmFallback({
+          offscreen,
+          ctx,
+          renderAt,
+          totalDuration,
           renderedAudio,
           step: usedStep,
-          videoCodec: preflight.selectedVideoCodec,
+          fps,
           signal,
           onProgress,
         });
         break;
-      } catch (muxErr) {
-        if (attempt === candidates.length - 1) {
-          throw muxErr;
+      }
+
+      try {
+        finalBlob = await encodeWithMediabunny({
+          offscreen,
+          ctx,
+          renderAt,
+          totalDuration,
+          renderedAudio,
+          step: usedStep,
+          fps,
+          useAac: preflight.selectedAudioCodec === 'aac',
+          signal,
+          onProgress,
+        });
+        usedExt = 'mp4';
+        usedCodec = preflight.selectedVideoCodec!;
+        break;
+      } catch (err) {
+        if (signal?.aborted) throw err;
+        try {
+          finalBlob = await encodeWithMp4Muxer({
+            offscreen,
+            ctx,
+            renderAt,
+            totalDuration,
+            renderedAudio,
+            step: usedStep,
+            fps,
+            videoCodec: preflight.selectedVideoCodec!,
+            signal,
+            onProgress,
+          });
+          usedExt = 'mp4';
+          usedCodec = preflight.selectedVideoCodec!;
+          break;
+        } catch (muxErr) {
+          if (attempt === candidates.length - 1) {
+            if (preflight.webmSupported) {
+              downscaleWarning = 'ตัวเข้ารหัส MP4 ขัดข้อง สลับไปใช้ WebM Fallback อัตโนมัติ';
+              usedExt = 'webm';
+              usedCodec = 'vp8/vp9';
+              usedAudioCodec = 'opus';
+              finalBlob = await encodeWithWebmFallback({
+                offscreen,
+                ctx,
+                renderAt,
+                totalDuration,
+                renderedAudio,
+                step: usedStep,
+                fps,
+                signal,
+                onProgress,
+              });
+              break;
+            }
+            throw muxErr;
+          }
         }
       }
+    } finally {
+      stage3d?.dispose();
     }
   }
 
-  if (!finalBlob) {
-    throw new Error('ไม่สามารถสร้างไฟล์ MP4 ได้');
+  if (!finalBlob || finalBlob.size === 0) {
+    throw new Error('ไม่สามารถสร้างไฟล์วิดีโอที่มีข้อมูลสมบูรณ์ได้');
   }
 
-  // VERIFY Step: inspect duration via hidden <video> and check audio track / RMS
-  onProgress('กำลังตรวจสอบไฟล์ MP4 และเสียงในไฟล์ (VERIFY)…', 96);
+  // VERIFY Step: inspect Blob metadata & audio RMS before returning 100%
+  onProgress('กำลังตรวจสอบไฟล์วิดีโอและเสียงในไฟล์ (VERIFY)…', 96);
   const url = URL.createObjectURL(finalBlob);
   const probeVideo = document.createElement('video');
   probeVideo.preload = 'metadata';
   probeVideo.src = url;
   const durationSec = await new Promise<number | null>((resolve) => {
-    probeVideo.onloadedmetadata = () => resolve(Number.isFinite(probeVideo.duration) ? probeVideo.duration : null);
-    setTimeout(() => resolve(null), 6000);
+    probeVideo.onloadedmetadata = () =>
+      resolve(Number.isFinite(probeVideo.duration) ? probeVideo.duration : null);
+    setTimeout(() => resolve(null), 5000);
   });
   URL.revokeObjectURL(url);
 
@@ -560,7 +673,9 @@ export async function exportCartoonVideo(params: {
   }
 
   try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const probeCtx = new AudioCtx();
     const decoded = await probeCtx.decodeAudioData(await finalBlob.arrayBuffer());
     const ch = decoded.getChannelData(0);
@@ -578,19 +693,20 @@ export async function exportCartoonVideo(params: {
     audioVerifiedStatus = hasAudioTrack ? 'detected' : 'unverifiable';
   }
 
-  onProgress('สร้างและตรวจสอบไฟล์ MP4 เสร็จสมบูรณ์', 100);
+  onProgress(`สร้างและตรวจสอบไฟล์ ${usedExt.toUpperCase()} เสร็จสมบูรณ์`, 100);
   return {
     blob: finalBlob,
-    mimeType: 'video/mp4',
-    ext: 'mp4',
+    mimeType: usedExt === 'mp4' ? 'video/mp4' : 'video/webm',
+    ext: usedExt,
     durationSec,
     hasAudioTrack,
     audioVerifiedStatus,
     usedScale: usedStep.scale,
     usedWidth: usedStep.width,
     usedHeight: usedStep.height,
-    usedCodec: preflight.selectedVideoCodec,
-    usedAudioCodec: preflight.selectedAudioCodec || 'aac',
+    usedFps: fps,
+    usedCodec,
+    usedAudioCodec,
     downscaleWarning,
   };
 }

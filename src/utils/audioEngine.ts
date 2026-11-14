@@ -4,10 +4,11 @@ import type {
   CartoonProject,
   MusicConfig,
   PauseCandidate,
+  SceneAudioRecord,
   SfxName,
   TimelineSegment,
 } from '../types/cartoon';
-import { resolveAtTextLocalTime } from './projectLogic';
+import { computeAudioEnvelope, resolveAtTextLocalTime } from './projectLogic';
 
 export interface ScheduledAudioEvent {
   time: number; // absolute video timeline time (sec)
@@ -620,3 +621,137 @@ export async function exportMixedMp3(params: {
 
   return new Blob(mp3Parts as unknown as BlobPart[], { type: 'audio/mpeg' });
 }
+
+export interface MergedSceneAudioResult {
+  voiceBuffer: AudioBuffer | null;
+  rawWav: ArrayBuffer | null;
+  envelope: number[];
+  pauseCandidates: PauseCandidate[];
+  speechStartSec: number;
+  speechEndSec: number;
+  sceneDurations: number[];
+}
+
+function encodeAudioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
+  const numChannels = Math.min(2, buffer.numberOfChannels);
+  const sr = buffer.sampleRate;
+  const len = buffer.length;
+  const dataSize = len * numChannels * 2;
+  const ab = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(ab);
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sr, true);
+  view.setUint32(28, sr * numChannels * 2, true);
+  view.setUint16(32, numChannels * 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  const ch0 = buffer.getChannelData(0);
+  const ch1 = numChannels > 1 ? buffer.getChannelData(1) : ch0;
+  let offset = 44;
+  for (let i = 0; i < len; i++) {
+    const s0 = Math.max(-1, Math.min(1, ch0[i]));
+    view.setInt16(offset, s0 < 0 ? s0 * 0x8000 : s0 * 0x7fff, true);
+    offset += 2;
+    if (numChannels > 1) {
+      const s1 = Math.max(-1, Math.min(1, ch1[i]));
+      view.setInt16(offset, s1 < 0 ? s1 * 0x8000 : s1 * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return ab;
+}
+
+/**
+ * Combines individual SceneAudioRecords into a single master Voice AudioBuffer aligned with timeline segments.
+ */
+export async function mergeSceneAudioRecordsToBuffer(
+  ctx: AudioContext,
+  scenes: CartoonProject['scenes'],
+  sceneAudioMap: Record<string, SceneAudioRecord>,
+  leadSec = 0.4
+): Promise<MergedSceneAudioResult> {
+  const sampleRate = ctx.sampleRate || 44100;
+  const decodedPerScene: Array<AudioBuffer | null> = [];
+  const sceneDurations: number[] = [];
+
+  for (const sc of scenes) {
+    const rec = sc.id ? sceneAudioMap[sc.id] : undefined;
+    if (!rec) {
+      decodedPerScene.push(null);
+      sceneDurations.push(sc.manualDurationSec || Math.max(1.8, sc.narration.length / 11));
+      continue;
+    }
+    try {
+      const ab = await rec.audioBlob.arrayBuffer();
+      const buf = await ctx.decodeAudioData(ab.slice(0));
+      decodedPerScene.push(buf);
+      sceneDurations.push(buf.duration);
+    } catch {
+      decodedPerScene.push(null);
+      sceneDurations.push(rec.durationSec || 2.5);
+    }
+  }
+
+  const hasAny = decodedPerScene.some(Boolean);
+  if (!hasAny) {
+    return {
+      voiceBuffer: null,
+      rawWav: null,
+      envelope: [],
+      pauseCandidates: [],
+      speechStartSec: 0,
+      speechEndSec: 0,
+      sceneDurations,
+    };
+  }
+
+  // Build exact speech buffer concatenated starting at 0 (App timeline places it at leadSec)
+  let totalSpeechSec = 0;
+  for (let i = 0; i < scenes.length; i++) {
+    const hold = scenes[i].holdAfter ?? (i === scenes.length - 1 ? 2.0 : 0);
+    totalSpeechSec += Math.max(1.0, sceneDurations[i] + (scenes[i].syncOffset ?? 0)) + hold;
+  }
+
+  const totalSamples = Math.max(sampleRate, Math.ceil((totalSpeechSec + leadSec) * sampleRate));
+  const outBuf = ctx.createBuffer(1, totalSamples, sampleRate);
+  const outCh = outBuf.getChannelData(0);
+
+  let cursorSec = 0;
+  for (let i = 0; i < scenes.length; i++) {
+    const buf = decodedPerScene[i];
+    if (buf) {
+      const startSample = Math.floor(cursorSec * sampleRate);
+      const srcCh = buf.getChannelData(0);
+      for (let s = 0; s < srcCh.length && startSample + s < outCh.length; s++) {
+        outCh[startSample + s] = srcCh[s];
+      }
+    }
+    const hold = scenes[i].holdAfter ?? (i === scenes.length - 1 ? 2.0 : 0);
+    cursorSec += Math.max(1.0, sceneDurations[i] + (scenes[i].syncOffset ?? 0)) + hold;
+  }
+
+  const env = computeAudioEnvelope(outCh, sampleRate);
+  const rawWav = encodeAudioBufferToWav(outBuf);
+
+  return {
+    voiceBuffer: outBuf,
+    rawWav,
+    envelope: env.envelope,
+    pauseCandidates: env.pauseCandidates,
+    speechStartSec: 0,
+    speechEndSec: totalSpeechSec,
+    sceneDurations,
+  };
+}
+

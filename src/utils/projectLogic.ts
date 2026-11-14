@@ -2,24 +2,32 @@ import type {
   ActorFace,
   ActorPose,
   AmbientType,
+  AnimationClip3D,
   BgPreset,
   CameraMove,
+  CameraShotType,
   CardDef,
   CardType,
   CartoonEnding,
   CartoonProject,
   CartoonStyleKey,
   CharacterDef,
+  EnvironmentConfig3D,
+  EnvironmentPreset3D,
   HairStyle,
   LookGrade,
   OutfitType,
   PauseCandidate,
+  ProductionPlanMeta,
+  RenderEngineMode,
+  SceneAudioRecord,
   SceneDef,
   SceneFx,
   SceneMood,
   SceneTransition,
   SfxName,
   ShotScale,
+  StylePreset3D,
   SubtitleStyle,
   SyncDiagnostics,
   TimelineSegment,
@@ -72,6 +80,59 @@ const VALID_STYLES: CartoonStyleKey[] = [
   'cinema_real',
   'custom',
 ];
+const VALID_STYLES_3D: StylePreset3D[] = [
+  'stylized_3d',
+  'cinematic_3d',
+  'semi_realistic_3d',
+  'fantasy_3d',
+  'dark_cinematic_3d',
+  'clay_3d',
+  'stop_motion_3d',
+  'realistic_film_3d',
+  'anime_3d',
+  'custom_3d',
+];
+const VALID_ENVS_3D: EnvironmentPreset3D[] = [
+  'forest_trail',
+  'riverside_sunset',
+  'cozy_living_room',
+  'neon_city_night',
+  'thai_temple',
+  'studio_stage',
+];
+const VALID_SHOTS_3D: CameraShotType[] = [
+  'establishing_wide',
+  'extreme_wide',
+  'medium',
+  'closeup',
+  'extreme_closeup',
+  'over_the_shoulder',
+  'low_angle',
+  'high_angle',
+  'birds_eye',
+  'tracking',
+  'dolly_in',
+  'dolly_out',
+  'pan',
+  'tilt',
+  'orbit',
+  'crane',
+  'pov',
+];
+const VALID_CLIPS_3D: AnimationClip3D[] = [
+  'Idle',
+  'Walk',
+  'Run',
+  'Turn',
+  'Jump',
+  'Sit',
+  'Talk',
+  'LookAround',
+  'Fear',
+  'Smile',
+  'Cry',
+  'Action',
+];
 const VALID_ENDINGS: CartoonEnding[] = ['twist', 'summary', 'next', 'cta', 'open'];
 const VALID_LAYOUTS: VideoLayoutMode[] = ['full', 'letterbox'];
 const VALID_SUB_STYLES: SubtitleStyle[] = ['sticker_dual', 'red_pill', 'yellow_text', 'plain', 'dark_box', 'none'];
@@ -101,6 +162,66 @@ export function mapStyleKey(raw: unknown, fallback: CartoonStyleKey = 'paper'): 
   const lower = s.toLowerCase() as CartoonStyleKey;
   if (VALID_STYLES.includes(lower)) return lower;
   return fallback;
+}
+
+export function poseToDefaultClip3D(pose: ActorPose): AnimationClip3D {
+  switch (pose) {
+    case 'walk':
+      return 'Walk';
+    case 'talk':
+      return 'Talk';
+    case 'scared':
+      return 'Fear';
+    case 'cheer':
+      return 'Smile';
+    case 'think':
+      return 'LookAround';
+    case 'sit':
+      return 'Sit';
+    default:
+      return 'Idle';
+  }
+}
+
+export function bgPresetToEnv3D(bgPreset: BgPreset | undefined, mood: SceneMood): EnvironmentConfig3D {
+  const map: Partial<Record<BgPreset, EnvironmentPreset3D>> = {
+    forest: 'forest_trail',
+    mountain: 'forest_trail',
+    village: 'riverside_sunset',
+    ocean: 'riverside_sunset',
+    harbor_dusk: 'riverside_sunset',
+    sunset: 'riverside_sunset',
+    room: 'cozy_living_room',
+    living_room_night: 'cozy_living_room',
+    classroom: 'cozy_living_room',
+    office: 'cozy_living_room',
+    city_night: 'neon_city_night',
+    street_night: 'neon_city_night',
+    metro_station: 'neon_city_night',
+    shrine_hall: 'thai_temple',
+    paper: 'studio_stage',
+    grid_tech: 'studio_stage',
+  };
+  const preset = (bgPreset && map[bgPreset]) || (mood === 'night' || mood === 'dark' ? 'neon_city_night' : mood === 'dusk' ? 'riverside_sunset' : 'forest_trail');
+  const timeOfDay: EnvironmentConfig3D['timeOfDay'] =
+    mood === 'night' || mood === 'dark'
+      ? 'night'
+      : mood === 'dusk'
+        ? 'dusk'
+        : mood === 'room'
+          ? 'golden'
+          : 'day';
+  return {
+    preset,
+    timeOfDay,
+    fogDensity: mood === 'dark' ? 0.5 : mood === 'dusk' ? 0.25 : 0.14,
+    windStrength: 0.3,
+    rainIntensity: 0,
+    dustAmount: 0.35,
+    sunRays: mood === 'dusk' || mood === 'day' ? 0.5 : 0.2,
+    treesDensity: preset === 'forest_trail' ? 0.75 : 0.45,
+    waterRipple: preset === 'riverside_sunset',
+  };
 }
 
 export function parseJsonSafely(text: string): unknown {
@@ -152,11 +273,13 @@ function normalizeCard(raw: unknown): CardDef | null {
 }
 
 /**
- * Supports BOTH standard flat project JSON AND Director OUTPUT G (G1/G2/G3/G4/G5) format.
+ * Supports standard flat project JSON, ZKatoon 3D Director JSON, AND legacy OUTPUT G (G1/G2/G3/G4/G5).
  */
 export function normalizeProject(
   raw: unknown,
   defaults?: {
+    renderEngine?: RenderEngineMode;
+    style3d?: StylePreset3D;
     style?: CartoonStyleKey;
     end?: CartoonEnding;
     layout?: VideoLayoutMode;
@@ -168,7 +291,6 @@ export function normalizeProject(
   }
 ): CartoonProject {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  // Check if OUTPUT G format (has G1/G2/G4)
   const g1 = (obj.G1 || obj.brief || {}) as Record<string, unknown>;
   const rawScenes = Array.isArray(obj.G4)
     ? obj.G4
@@ -187,7 +309,7 @@ export function normalizeProject(
 
   const characters: CharacterDef[] =
     rawChars.length > 0
-      ? rawChars.slice(0, 6).map((c, idx) => {
+      ? rawChars.slice(0, 8).map((c, idx) => {
           const item = (c && typeof c === 'object' ? c : {}) as Record<string, unknown>;
           const hs = String(item.hairStyle || item.hair_style || 'short') as HairStyle;
           const outfitObj =
@@ -196,24 +318,36 @@ export function normalizeProject(
               : null;
           const rawOutfit = String(outfitObj?.type || item.outfit || 'tshirt') as OutfitType;
           const acc = Array.isArray(item.accessories)
-            ? item.accessories.map((a) => String(a) as CharacterDef['accessories'] extends Array<infer U> ? U : never)
+            ? item.accessories.map((a) => String(a) as NonNullable<CharacterDef['accessories']>[number])
             : [];
+          const sigPose = String(item.signaturePose || 'Idle') as AnimationClip3D;
           return {
             id: String(item.id || `C${idx + 1}`),
             name: String(item.name || `ตัวละคร ${idx + 1}`),
             role: item.role ? String(item.role) : undefined,
+            gender: (item.gender as CharacterDef['gender']) || 'neutral',
             species: (item.species as CharacterDef['species']) || 'human',
             age: (item.age as CharacterDef['age']) || 'adult',
             body: (item.body as CharacterDef['body']) || 'normal',
+            proportion3d: (item.proportion3d as CharacterDef['proportion3d']) || 'stylized',
+            personality: item.personality ? String(item.personality) : undefined,
+            walkStyle: (item.walkStyle as CharacterDef['walkStyle']) || 'normal',
+            signaturePose: VALID_CLIPS_3D.includes(sigPose) ? sigPose : 'Idle',
             skin: String(item.skin || '#f1c27d'),
             hair: String(item.hair || '#3b2a20'),
             hairStyle: VALID_HAIR.includes(hs) ? hs : 'short',
             shirt: String(outfitObj?.color || item.shirt || '#6366f1'),
             pants: item.pants ? String(item.pants) : '#475569',
+            shoes: item.shoes ? String(item.shoes) : '#1e293b',
             outfit: VALID_OUTFITS.includes(rawOutfit) ? rawOutfit : 'tshirt',
             outfitAccent: outfitObj?.accent ? String(outfitObj.accent) : undefined,
-            glasses: Boolean(item.glasses || acc.includes('glasses' as never)),
+            glasses: Boolean(item.glasses || acc.includes('glasses')),
             accessories: acc,
+            glbAssetId: item.glbAssetId ? String(item.glbAssetId) : undefined,
+            glbFileName: item.glbFileName ? String(item.glbFileName) : undefined,
+            glbHasSkeleton: typeof item.glbHasSkeleton === 'boolean' ? item.glbHasSkeleton : undefined,
+            glbClipNames: Array.isArray(item.glbClipNames) ? item.glbClipNames.map(String) : undefined,
+            preferredVoiceId: item.preferredVoiceId ? String(item.preferredVoiceId) : undefined,
           };
         })
       : [
@@ -224,6 +358,8 @@ export function normalizeProject(
             hair: '#3b2a20',
             hairStyle: 'short',
             shirt: '#6366f1',
+            pants: '#334155',
+            proportion3d: 'stylized',
             glasses: false,
           },
         ];
@@ -231,19 +367,26 @@ export function normalizeProject(
   const scenes: SceneDef[] = rawScenes.map((s, sceneIdx) => {
     const sc = (s && typeof s === 'object' ? s : {}) as Record<string, unknown>;
     const rawActors = Array.isArray(sc.actors) ? sc.actors : [];
-    const actors = rawActors.slice(0, 4).map((a, idx) => {
+    const actors = rawActors.slice(0, 6).map((a, idx) => {
       const act = (a && typeof a === 'object' ? a : {}) as Record<string, unknown>;
       const rawX = typeof act.x === 'number' && Number.isFinite(act.x) ? act.x : idx === 0 ? 0.45 : 0.72;
       const pose = String(act.pose || 'idle') as ActorPose;
+      const validPose = VALID_POSES.includes(pose) ? pose : 'idle';
+      const rawClip = String(act.clip3d || '') as AnimationClip3D;
+      const clip3d = VALID_CLIPS_3D.includes(rawClip) ? rawClip : poseToDefaultClip3D(validPose);
       const face = String(act.face || 'neutral') as ActorFace;
       return {
         char: String(act.char || characters[0].id),
         x: Math.min(0.9, Math.max(0.1, rawX)),
         y: typeof act.y === 'number' ? act.y : undefined,
+        z: typeof act.z === 'number' ? act.z : 0,
+        rotY: typeof act.rotY === 'number' ? act.rotY : undefined,
         scale: typeof act.scale === 'number' ? Math.min(1.6, Math.max(0.5, act.scale)) : 1,
-        pose: VALID_POSES.includes(pose) ? pose : 'idle',
+        pose: validPose,
+        clip3d,
         face: VALID_FACES.includes(face) ? face : 'neutral',
         flip: Boolean(act.flip),
+        lookTarget: (act.lookTarget as SceneDef['actors'][number]['lookTarget']) || 'camera',
         moveTo:
           act.moveTo && typeof act.moveTo === 'object'
             ? (act.moveTo as SceneDef['actors'][number]['moveTo'])
@@ -251,7 +394,6 @@ export function normalizeProject(
       };
     });
 
-    // Support both single `card` and OUTPUT G `cards[]`
     let card: CardDef | null = null;
     let extraCards: CardDef[] | undefined;
     if (Array.isArray(sc.cards) && sc.cards.length > 0) {
@@ -265,9 +407,8 @@ export function normalizeProject(
     const bgObj = sc.bg && typeof sc.bg === 'object' ? (sc.bg as Record<string, unknown>) : null;
     const bgPreset = (bgObj?.preset || sc.bgPreset || undefined) as BgPreset | undefined;
     const rawMood = String(sc.mood || (bgPreset === 'paper' ? 'paper' : 'night')) as SceneMood;
-    const rawFx = String(
-      Array.isArray(sc.fx) ? sc.fx[0] || 'none' : sc.fx || 'none'
-    ) as SceneFx;
+    const mood: SceneMood = VALID_MOODS.includes(rawMood) ? rawMood : 'night';
+    const rawFx = String(Array.isArray(sc.fx) ? sc.fx[0] || 'none' : sc.fx || 'none') as SceneFx;
     const hl = Array.isArray(sc.hl || sc.highlightWords)
       ? ((sc.hl || sc.highlightWords) as unknown[]).map((x) => String(x)).filter(Boolean)
       : [];
@@ -286,8 +427,25 @@ export function normalizeProject(
 
     const rawCamera = String(sc.camera || 'static') as CameraMove;
     const rawShot = String(sc.shot || 'medium') as ShotScale;
+    const rawShot3d = String(sc.shotType3d || 'medium') as CameraShotType;
     const rawTrans = String(sc.transition || 'fade') as SceneTransition;
     const rawAmb = String(sc.ambient || 'none') as AmbientType;
+
+    const rawEnv3d = sc.env3d && typeof sc.env3d === 'object' ? (sc.env3d as Record<string, unknown>) : null;
+    const fallbackEnv = bgPresetToEnv3D(bgPreset, mood);
+    const envPreset = String(rawEnv3d?.preset || fallbackEnv.preset) as EnvironmentPreset3D;
+    const env3d: EnvironmentConfig3D = {
+      preset: VALID_ENVS_3D.includes(envPreset) ? envPreset : fallbackEnv.preset,
+      timeOfDay: (rawEnv3d?.timeOfDay as EnvironmentConfig3D['timeOfDay']) || fallbackEnv.timeOfDay,
+      fogDensity: typeof rawEnv3d?.fogDensity === 'number' ? rawEnv3d.fogDensity : fallbackEnv.fogDensity,
+      windStrength: typeof rawEnv3d?.windStrength === 'number' ? rawEnv3d.windStrength : fallbackEnv.windStrength,
+      rainIntensity: typeof rawEnv3d?.rainIntensity === 'number' ? rawEnv3d.rainIntensity : fallbackEnv.rainIntensity,
+      dustAmount: typeof rawEnv3d?.dustAmount === 'number' ? rawEnv3d.dustAmount : fallbackEnv.dustAmount,
+      sunRays: typeof rawEnv3d?.sunRays === 'number' ? rawEnv3d.sunRays : fallbackEnv.sunRays,
+      treesDensity: typeof rawEnv3d?.treesDensity === 'number' ? rawEnv3d.treesDensity : fallbackEnv.treesDensity,
+      waterRipple:
+        typeof rawEnv3d?.waterRipple === 'boolean' ? rawEnv3d.waterRipple : fallbackEnv.waterRipple,
+    };
 
     const manualDur =
       typeof sc.manualDurationSec === 'number' && Number.isFinite(sc.manualDurationSec) && sc.manualDurationSec >= 0.8
@@ -296,12 +454,17 @@ export function normalizeProject(
 
     return {
       id: sc.id ? String(sc.id) : `S${sceneIdx + 1}`,
+      title: sc.title ? String(sc.title) : `ฉากที่ ${sceneIdx + 1}`,
+      storyBeat: sc.storyBeat ? String(sc.storyBeat) : undefined,
       narration: String(sc.narration || sc.text || '').trim(),
       subtitleEn: sc.subtitleEn ? String(sc.subtitleEn).trim() : undefined,
-      mood: VALID_MOODS.includes(rawMood) ? rawMood : 'night',
+      mood,
       bgPreset,
+      env3d,
       blurBg: Boolean(sc.blurBg),
       shot: VALID_SHOTS.includes(rawShot) ? rawShot : 'medium',
+      shotType3d: VALID_SHOTS_3D.includes(rawShot3d) ? rawShot3d : 'medium',
+      shotReason: sc.shotReason ? String(sc.shotReason) : undefined,
       camera: VALID_CAMERAS.includes(rawCamera) ? rawCamera : 'static',
       transition: VALID_TRANSITIONS.includes(rawTrans) ? rawTrans : 'fade',
       hudText: sc.hudText ? String(sc.hudText) : sc.hud && typeof sc.hud === 'string' ? sc.hud : undefined,
@@ -314,6 +477,7 @@ export function normalizeProject(
           ? Math.max(-3, Math.min(3, sc.syncOffset))
           : 0,
       manualDurationSec: manualDur,
+      voiceConfig: sc.voiceConfig && typeof sc.voiceConfig === 'object' ? (sc.voiceConfig as SceneDef['voiceConfig']) : undefined,
       actors,
       props: Array.isArray(sc.props) ? (sc.props as SceneDef['props']) : undefined,
       pov: (sc.pov as SceneDef['pov']) || 'none',
@@ -327,10 +491,19 @@ export function normalizeProject(
     };
   });
 
-  const style = mapStyleKey(g1.style_preset || obj.style, defaults?.style || 'paper');
+  const style = mapStyleKey(g1.style_preset || obj.style, defaults?.style || 'cinema_real');
+  const rawStyle3d = String(obj.style3d || defaults?.style3d || (style === 'clay' ? 'clay_3d' : 'cinematic_3d')) as StylePreset3D;
+  const style3d: StylePreset3D = VALID_STYLES_3D.includes(rawStyle3d) ? rawStyle3d : 'cinematic_3d';
+  const renderEngine: RenderEngineMode =
+    obj.renderEngine === '2d_paper' || obj.renderEngine === '3d'
+      ? obj.renderEngine
+      : defaults?.renderEngine || (style === 'paper' ? '2d_paper' : '3d');
+
   const rawEnd = String(g1.ending_type || obj.end || defaults?.end || 'summary') as CartoonEnding;
   const rawLayout = String(g1.layout || obj.layout || defaults?.layout || 'full') as VideoLayoutMode;
-  const rawSub = String(g1.subtitle_style || obj.subtitleStyle || defaults?.subtitleStyle || (style === 'paper' ? 'sticker_dual' : 'yellow_text')) as SubtitleStyle;
+  const rawSub = String(
+    g1.subtitle_style || obj.subtitleStyle || defaults?.subtitleStyle || (style === 'paper' ? 'sticker_dual' : 'yellow_text')
+  ) as SubtitleStyle;
 
   const g1Letterbox = (g1.letterbox || obj.letterbox || {}) as Record<string, unknown>;
   const topText = String(g1Letterbox.top_text || g1Letterbox.topText || defaults?.topText || '');
@@ -344,16 +517,27 @@ export function normalizeProject(
 
   const rawCine = (g1.cine_layer || obj.cineLayer || {}) as Record<string, unknown>;
   const cineEnabled =
-    typeof rawCine.enabled === 'boolean' ? rawCine.enabled : defaults?.cineEnabled ?? style === 'cinema_real';
+    typeof rawCine.enabled === 'boolean' ? rawCine.enabled : defaults?.cineEnabled ?? true;
 
   const rawDurations = Array.isArray(obj.sceneDurations)
     ? obj.sceneDurations.filter((d): d is number => typeof d === 'number' && Number.isFinite(d) && d > 0)
     : undefined;
 
   const rawG5 = (obj.G5 || obj.music || {}) as Record<string, unknown>;
+  const rawPlan =
+    obj.productionPlan && typeof obj.productionPlan === 'object'
+      ? (obj.productionPlan as ProductionPlanMeta)
+      : undefined;
 
   return {
+    id: obj.id ? String(obj.id) : undefined,
     title: String(g1.title || obj.title || 'การ์ตูนเรื่องใหม่').trim(),
+    renderEngine,
+    style3d,
+    customStyle3d:
+      obj.customStyle3d && typeof obj.customStyle3d === 'object'
+        ? (obj.customStyle3d as CartoonProject['customStyle3d'])
+        : undefined,
     style,
     customStyleDesc: g1.custom_style ? String(g1.custom_style) : obj.customStyleDesc ? String(obj.customStyleDesc) : undefined,
     end: VALID_ENDINGS.includes(rawEnd) ? rawEnd : 'summary',
@@ -363,13 +547,13 @@ export function normalizeProject(
     hud: {
       enabled: hudEnabled,
       startText: String(rawHud.start || rawHud.startText || g1.title || obj.title || ''),
-      showDot: typeof rawHud.showDot === 'boolean' ? rawHud.showDot : true,
+      showDot: typeof rawHud.showDot === 'boolean' ? rawHud.showDot : false,
     },
     cineLayer: {
       enabled: cineEnabled,
-      defaultGrade: (rawCine.defaultGrade as LookGrade) || 'neutral_day',
+      defaultGrade: (rawCine.defaultGrade as LookGrade) || 'golden_hour',
     },
-    clay: style === 'clay' ? { stopmotionFps: 12 } : undefined,
+    clay: style === 'clay' || style3d === 'clay_3d' ? { stopmotionFps: 12 } : undefined,
     music: {
       mood: (rawG5.mood as NonNullable<CartoonProject['music']>['mood']) || (style === 'paper' ? 'warm' : 'calm'),
       bpm: typeof rawG5.bpm === 'number' ? rawG5.bpm : 88,
@@ -377,6 +561,7 @@ export function normalizeProject(
       mode: (rawG5.mode as NonNullable<CartoonProject['music']>['mode']) || 'major',
     },
     globalOffset: typeof obj.globalOffset === 'number' ? obj.globalOffset : 0,
+    productionPlan: rawPlan,
     characters,
     scenes,
     sceneDurations:
@@ -386,7 +571,7 @@ export function normalizeProject(
 
 /**
  * Computes Thai text speaking weight:
- * regular char = 1, comma/pause = 3, period/newline = 6
+ * regular char = 1, comma/pause = 2.5, period/newline = 6
  */
 export function computeThaiTextWeight(text: string): number {
   let w = 0;
@@ -481,10 +666,6 @@ export interface TimelineBuildResult {
   syncDiagnostics: SyncDiagnostics;
 }
 
-/**
- * Matches expected boundary times monotonically against silence pauseCandidates within ±1.2s,
- * enforcing minimum scene duration of 1.2s.
- */
 function matchSceneBoundariesWithPauses(
   expectedBounds: number[],
   totalSpeechSpan: number,
@@ -514,7 +695,6 @@ function matchSceneBoundariesWithPauses(
       if (cand.midSec < minAllowed || cand.midSec > maxAllowed) continue;
       const dist = Math.abs(cand.midSec - exp);
       if (dist <= maxSnap) {
-        // Favor close distance and longer pause duration
         const score = dist - Math.min(0.4, cand.durSec * 0.45);
         if (score < bestScore) {
           bestScore = score;
@@ -548,6 +728,7 @@ export function buildTimeline(
     sceneDurations?: number[];
     pauseCandidates?: PauseCandidate[];
     globalOffset?: number;
+    sceneAudioMap?: Record<string, SceneAudioRecord>;
   } = {}
 ): TimelineBuildResult {
   if (scenes.length === 0) {
@@ -567,12 +748,23 @@ export function buildTimeline(
   }
 
   const leadSec = Math.max(0.1, 0.4 + (options.globalOffset ?? 0));
-  const defaultEndHold = 2.5;
+  const defaultEndHold = 2.0;
   const hasAnyManualDur = scenes.some((s) => typeof s.manualDurationSec === 'number' && s.manualDurationSec > 0);
   const pauseCandidates = options.pauseCandidates ?? [];
 
-  // Case 1: Explicit manual durations or exact per-scene TTS durations
+  // Derive per-scene durations from sceneAudioMap if all or some scenes have generated audio
+  const perSceneAudioDurations = options.sceneAudioMap
+    ? scenes.map((s) => {
+        const rec = s.id ? options.sceneAudioMap?.[s.id] : undefined;
+        return rec && rec.durationSec > 0.1 ? rec.durationSec : 0;
+      })
+    : [];
+  const hasPerSceneAudio =
+    perSceneAudioDurations.length === scenes.length && perSceneAudioDurations.some((d) => d > 0);
+
+  // Case 1: Per-scene TTS durations, explicit sceneDurations, or manual durations
   if (
+    hasPerSceneAudio ||
     hasAnyManualDur ||
     (options.sceneDurations &&
       options.sceneDurations.length === scenes.length &&
@@ -581,12 +773,14 @@ export function buildTimeline(
     let cursor = leadSec;
     const timeline: TimelineSegment[] = scenes.map((s, i) => {
       const isLast = i === scenes.length - 1;
+      const perAudioDur = perSceneAudioDurations[i] > 0 ? perSceneAudioDurations[i] : undefined;
       const fallbackDur =
-        options.sceneDurations?.[i] ?? Math.max(1.5, computeThaiTextWeight(s.narration) / 11);
+        perAudioDur ?? options.sceneDurations?.[i] ?? Math.max(1.5, computeThaiTextWeight(s.narration) / 11);
       const baseSpeechDur =
-        typeof s.manualDurationSec === 'number' && s.manualDurationSec > 0
+        perAudioDur ??
+        (typeof s.manualDurationSec === 'number' && s.manualDurationSec > 0
           ? s.manualDurationSec
-          : fallbackDur;
+          : fallbackDur);
       const adjustedSpeech = Math.max(1.0, baseSpeechDur + (s.syncOffset ?? 0));
       const hold = s.holdAfter ?? (isLast ? defaultEndHold : 0);
       const speechEnd = cursor + adjustedSpeech;
@@ -607,7 +801,7 @@ export function buildTimeline(
         foundPauses: pauseCandidates.length,
         matchedBoundaries: Math.max(0, scenes.length - 1),
         totalBoundaries: Math.max(0, scenes.length - 1),
-        mode: hasAnyManualDur ? 'manual' : 'per-scene-tts',
+        mode: hasPerSceneAudio ? 'per-scene-tts' : hasAnyManualDur ? 'manual' : 'per-scene-tts',
       },
     };
   }
@@ -624,7 +818,6 @@ export function buildTimeline(
 
   const speechSpan = Math.max(scenes.length * 1.2, se - ss);
 
-  // Calculate expected cumulative boundary times (relative to speech start 0)
   const expectedBounds: number[] = [];
   let accW = 0;
   for (let i = 0; i < scenes.length - 1; i++) {
@@ -673,9 +866,6 @@ export function buildTimeline(
   };
 }
 
-/**
- * Resolves `atText` position within a scene and snaps ±0.4s to nearest pause candidate if available.
- */
 export function resolveAtTextLocalTime(
   narration: string,
   atText: string | undefined,
@@ -719,6 +909,43 @@ export function getMouthOpenAt(
   if (speechTime < 0) return 0;
   const idx = Math.floor(speechTime / 0.02);
   return envelope[idx] ?? 0;
+}
+
+/**
+ * Resolves lip-sync openness (0..1) using per-scene phoneme marks when available,
+ * then per-scene audio envelope, then global audio envelope, then subtle speaking wave.
+ */
+export function getLipSyncOpennessAt(
+  time: number,
+  seg: TimelineSegment | undefined,
+  sceneAudioMap: Record<string, SceneAudioRecord> | undefined,
+  globalEnvelope: number[],
+  leadSec = 0.4,
+  speechStartSec = 0
+): number {
+  if (!seg) return 0;
+  if (time > seg.speechEnd) return 0;
+  const localT = Math.max(0, time - seg.a);
+  const sceneId = seg.s.id;
+  const rec = sceneId && sceneAudioMap ? sceneAudioMap[sceneId] : undefined;
+
+  if (rec) {
+    if (rec.phonemeMarks && rec.phonemeMarks.length > 0) {
+      for (let i = 0; i < rec.phonemeMarks.length; i++) {
+        const mark = rec.phonemeMarks[i];
+        const end = mark.endSec ?? mark.timeSec + 0.08;
+        if (localT >= mark.timeSec && localT <= end) {
+          return mark.openness;
+        }
+      }
+    }
+    if (rec.envelope.length > 0) {
+      const idx = Math.floor(localT / 0.02);
+      return rec.envelope[idx] ?? 0;
+    }
+  }
+
+  return getMouthOpenAt(time, globalEnvelope, leadSec, speechStartSec);
 }
 
 export interface SubtitleState {

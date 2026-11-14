@@ -1,107 +1,140 @@
-import { Film, FolderKanban, Play, SlidersHorizontal, Sparkles } from 'lucide-react';
+import {
+  Clapperboard,
+  Film,
+  FolderKanban,
+  HardDrive,
+  KeyRound,
+  Lock,
+  Mic2,
+  Sparkles,
+  Users,
+} from 'lucide-react';
 
-export type AppTab = 'create' | 'studio' | 'projects' | 'settings';
+export type AppTab =
+  | 'create'
+  | 'characters'
+  | 'voice'
+  | 'director'
+  | 'studio'
+  | 'projects'
+  | 'storage'
+  | 'settings';
 
 interface TopBarProps {
   activeTab: AppTab;
   onChangeTab: (tab: AppTab) => void;
   hasProject: boolean;
-  onOpenDemo: () => void;
+  workspaceName: string;
+  isLocked: boolean;
+  onOpenDemo3D: () => void;
 }
 
 const NAV_ITEMS: Array<{ id: AppTab; label: string; icon: typeof Sparkles }> = [
-  { id: 'create', label: 'สร้างการ์ตูน', icon: Sparkles },
-  { id: 'studio', label: 'สตูดิโอวิดีโอ', icon: Film },
+  { id: 'create', label: 'สร้างเรื่อง', icon: Sparkles },
+  { id: 'characters', label: 'ตัวละคร', icon: Users },
+  { id: 'voice', label: 'ห้องพากย์', icon: Mic2 },
+  { id: 'director', label: 'กำกับฉาก', icon: Clapperboard },
+  { id: 'studio', label: 'สตูดิโอ', icon: Film },
   { id: 'projects', label: 'โปรเจกต์', icon: FolderKanban },
-  { id: 'settings', label: 'ตั้งค่าเสียง', icon: SlidersHorizontal },
+  { id: 'storage', label: 'คลังเครื่อง', icon: HardDrive },
+  { id: 'settings', label: 'ตั้งค่า API', icon: KeyRound },
 ];
 
-export function TopBar({ activeTab, onChangeTab, hasProject, onOpenDemo }: TopBarProps) {
+export function TopBar({
+  activeTab,
+  onChangeTab,
+  hasProject,
+  workspaceName,
+  isLocked,
+  onOpenDemo3D,
+}: TopBarProps) {
   return (
     <>
-      <header className="sticky top-0 z-30 border-b border-white/[0.08] bg-[#0a0b10]/90 backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-8 px-4 sm:px-6">
-          <button
-            type="button"
-            onClick={() => onChangeTab('create')}
-            className="whitespace-nowrap shrink-0 text-left text-lg font-bold tracking-tight text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 rounded-md"
-          >
-            AI Cartoon Studio
-          </button>
+      <header className="sticky top-0 z-30 border-b border-white/[0.08] bg-[#0a0b10]">
+        <div className="mx-auto flex h-14 max-w-[1440px] items-center justify-between gap-3 px-4 sm:px-6">
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => onChangeTab('create')}
+              className="whitespace-nowrap text-left text-lg font-extrabold tracking-tight text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 rounded-md cursor-pointer"
+            >
+              ZKatoon <span className="text-violet-400 font-semibold text-xs ml-1">3D Studio</span>
+            </button>
+          </div>
 
           <nav
             aria-label="หลัก"
-            className="hidden md:flex items-center gap-6 text-sm font-medium"
+            className="hidden xl:flex items-center gap-1.5 text-[13px] font-medium overflow-x-auto"
           >
             {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
               const active = activeTab === item.id;
               return (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => onChangeTab(item.id)}
-                  className={`whitespace-nowrap shrink-0 min-h-[40px] px-1 border-b-2 transition-colors cursor-pointer ${
+                  className={`inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 min-h-[38px] px-2.5 rounded-lg border transition-colors cursor-pointer ${
                     active
-                      ? 'border-violet-400 text-white font-semibold'
-                      : 'border-transparent text-[#9894b8] hover:text-white'
+                      ? 'border-violet-500/60 bg-violet-500/15 text-white font-semibold'
+                      : 'border-transparent text-[#9894b8] hover:bg-white/[0.04] hover:text-white'
                   }`}
                 >
-                  {item.label}
+                  <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>{item.label}</span>
                 </button>
               );
             })}
           </nav>
 
-          <div className="flex items-center shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={
-                activeTab === 'studio'
-                  ? () => onChangeTab('create')
-                  : hasProject
-                    ? () => onChangeTab('studio')
-                    : onOpenDemo
-              }
-              className="inline-flex items-center gap-2 whitespace-nowrap shrink-0 min-h-[40px] rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-500 cursor-pointer"
+              onClick={() => onChangeTab('storage')}
+              title="จัดการ Workspace ในเครื่อง"
+              className="hidden sm:inline-flex items-center gap-1.5 whitespace-nowrap min-h-[36px] rounded-lg border border-white/10 bg-[#13141d] px-2.5 text-xs text-[#d6d3eb] hover:border-violet-400/40 cursor-pointer"
             >
-              {activeTab === 'studio' ? (
-                <>
-                  <Sparkles className="h-4 w-4" aria-hidden="true" />
-                  <span>สร้างเรื่องใหม่</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4" aria-hidden="true" />
-                  <span>{hasProject ? 'เปิดสตูดิโอ' : 'ลองเล่นตัวอย่าง'}</span>
-                </>
-              )}
+              {isLocked && <Lock className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />}
+              <span className="max-w-[120px] truncate">{workspaceName}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={hasProject ? () => onChangeTab('studio') : onOpenDemo3D}
+              className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 min-h-[38px] rounded-xl bg-violet-600 px-3.5 py-1.5 text-xs sm:text-sm font-semibold text-white transition-colors hover:bg-violet-500 cursor-pointer"
+            >
+              <Film className="h-4 w-4" aria-hidden="true" />
+              <span>{hasProject ? 'เข้าสตูดิโอ' : 'เปิดตัวอย่าง 3D'}</span>
             </button>
           </div>
         </div>
-      </header>
 
-      <nav
-        aria-label="เมนูล่าง"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 grid h-16 grid-cols-4 border-t border-white/[0.08] bg-[#0d0e15]/95 backdrop-blur-md pb-[env(safe-area-inset-bottom)]"
-      >
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon;
-          const active = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onChangeTab(item.id)}
-              className={`flex min-h-[44px] flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors cursor-pointer ${
-                active ? 'text-violet-300' : 'text-[#9894b8] hover:text-white'
-              }`}
-            >
-              <Icon className="h-5 w-5" aria-hidden="true" />
-              <span className="whitespace-nowrap">{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
+        {/* Tablet & Mobile horizontal scrollable 8-menu strip */}
+        <nav
+          aria-label="เมนูทั้งหมด"
+          className="xl:hidden flex items-center gap-1.5 overflow-x-auto border-t border-white/[0.06] px-3 py-2 no-scrollbar"
+        >
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const active = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onChangeTab(item.id)}
+                className={`inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 min-h-[36px] rounded-lg px-2.5 text-xs font-medium transition-colors cursor-pointer ${
+                  active
+                    ? 'bg-violet-600 text-white font-semibold'
+                    : 'bg-[#13141d] text-[#9894b8] hover:text-white'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </header>
     </>
   );
 }

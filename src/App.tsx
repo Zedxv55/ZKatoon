@@ -1,48 +1,53 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CharactersView } from './components/CharactersView';
 import { CreateView } from './components/CreateView';
+import { LocalStorageView } from './components/LocalStorageView';
 import { ProjectsView } from './components/ProjectsView';
+import { SceneDirectorView } from './components/SceneDirectorView';
 import { SettingsView } from './components/SettingsView';
 import { StudioView } from './components/StudioView';
 import { TopBar, type AppTab } from './components/TopBar';
+import { VoiceStudioView } from './components/VoiceStudioView';
+import { ThreeSceneStage } from './engine3d/ThreeSceneStage';
 import type {
   CartoonProject,
+  ExportFps,
+  HardwareCapabilities,
   PauseCandidate,
+  PerformancePreset,
+  PronunciationEntry,
   SavedProjectRecord,
+  SceneAudioRecord,
   StudioSelection,
   StudioSettings,
-  VoiceName,
+  VoicePreset,
+  WorkspaceMeta,
+  WorkspaceSecrets,
 } from './types/cartoon';
-import {
-  generateScriptViaOpenRouter,
-  getSavedCustomTtsKey,
-  getSavedOpenRouterKey,
-} from './utils/aiProviders';
+import { generateDirectorPlan } from './utils/aiDirector';
 import {
   buildAudioGraph,
   exportMixedMp3,
+  mergeSceneAudioRecordsToBuffer,
   type AudioGraphHandle,
 } from './utils/audioEngine';
 import { CANVAS_H, CANVAS_W, renderCartoonFrame } from './utils/canvasRenderer';
-import { DEMO_PROJECT } from './utils/cartoonData';
+import { probeHardwareCapabilities } from './utils/capabilities';
+import {
+  DEFAULT_SELECTION,
+  DEFAULT_SETTINGS,
+  DEMO_3D_PROJECT,
+  DEMO_PROJECT,
+} from './utils/cartoonData';
 import {
   buildTimeline,
   computeAudioEnvelope,
-  normalizeProject,
   sanitizeFilename,
 } from './utils/projectLogic';
 import {
-  deleteProjectFromDB,
-  deleteProjectVideoFromDB,
-  exportBackupJson,
-  getProjectFromDB,
   getStorageSummary,
-  listProjectsFromDB,
-  loadStudioSettings,
   requestPersistentStorage,
-  restoreBackupJson,
   saveProjectFilesToLocal,
-  saveProjectToDB,
-  saveStudioSettings,
   triggerDownload,
   type DirHandle,
   type StorageSummary,
@@ -53,54 +58,106 @@ import {
   type ExportPreflightStatus,
   type VideoExportResult,
 } from './utils/videoExport';
+import { generateUuid } from './utils/workspaceCrypto';
+import {
+  createWorkspace,
+  deleteVoicePreset,
+  deleteWorkspace,
+  deleteWorkspaceProject,
+  deleteWorkspaceProjectVideo,
+  enableWorkspacePassphrase,
+  exportWorkspaceBackupBlob,
+  getActiveWorkspace,
+  getOrCreateLocalDeviceId,
+  getPronunciationDict,
+  importWorkspaceBackupFile,
+  listProjectSceneAudio,
+  listVoicePresets,
+  listWorkspaceProjects,
+  listWorkspaces,
+  loadWorkspaceSettings,
+  removeWorkspacePassphrase,
+  renameWorkspace,
+  savePronunciationDict,
+  saveSceneAudioRecord,
+  saveVoicePreset,
+  saveWorkspaceProject,
+  saveWorkspaceSecrets,
+  saveWorkspaceSettings,
+  setActiveWorkspaceId,
+  unlockWorkspace,
+} from './utils/workspaceStore';
 
-function base64ToArrayBuffer(b64: string): ArrayBuffer {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) {
-    bytes[i] = bin.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
+const INITIAL_WORKSPACE: WorkspaceMeta = {
+  id: 'ws_loading',
+  name: 'กำลังโหลด Workspace…',
+  deviceId: 'local-init',
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+  hasPassphrase: false,
+  plainSecrets: {},
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('autostart') === '1' ? 'studio' : 'create';
+    if (params.get('autostart') === '1') return 'studio';
+    const qTab = params.get('tab') as AppTab | null;
+    if (
+      qTab &&
+      ['create', 'characters', 'voice', 'director', 'studio', 'projects', 'storage', 'settings'].includes(
+        qTab
+      )
+    ) {
+      return qTab;
+    }
+    return 'create';
   });
 
-  // Creation wizard state (defaults to PAPER-SKETCH style matching reference video)
-  const [selection, setSelection] = useState<StudioSelection>({
-    mode: 'story',
-    genre: 'ดราม่าซึ้ง',
-    len: 30,
-    audience: 'general',
-    style: 'paper',
-    layout: 'full',
-    topText: '',
-    bottomText: '',
-    subtitleStyle: 'sticker_dual',
-    hudEnabled: true,
-    cineEnabled: false,
-    end: 'twist',
+  // Multi-Workspace Local-First State
+  const [deviceId, setDeviceId] = useState<string>('local');
+  const [workspaces, setWorkspaces] = useState<WorkspaceMeta[]>([INITIAL_WORKSPACE]);
+  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceMeta>(INITIAL_WORKSPACE);
+  const [unlockedKey, setUnlockedKey] = useState<CryptoKey | null>(null);
+  const [secrets, setSecrets] = useState<WorkspaceSecrets>({});
+  const [settings, setSettings] = useState<StudioSettings>(DEFAULT_SETTINGS);
+  const [voicePresets, setVoicePresets] = useState<VoicePreset[]>([]);
+  const [dictionary, setDictionary] = useState<PronunciationEntry[]>([]);
+  const [savedProjects, setSavedProjects] = useState<SavedProjectRecord[]>([]);
+  const [storageSummary, setStorageSummary] = useState<StorageSummary>({
+    supported: true,
+    usageMB: 0,
+    quotaMB: 0,
+    freeMB: 0,
+    ratio: 0,
+    persisted: false,
   });
+
+  // Hardware probe
+  const [capabilities, setCapabilities] = useState<HardwareCapabilities | null>(null);
+
+  // Story Director & Wizard state
+  const [selection, setSelection] = useState<StudioSelection>(DEFAULT_SELECTION);
   const [topic, setTopic] = useState('');
   const [facts, setFacts] = useState('');
+  const [draftPlanProject, setDraftPlanProject] = useState<CartoonProject | null>(null);
 
-  // Studio settings
-  const [settings, setSettings] = useState<StudioSettings>(() => loadStudioSettings());
-  const [aiHealth, setAiHealth] = useState<{
-    ok: boolean;
-    aiReady: boolean;
-    models?: { script: string; tts: string };
-  } | null>(null);
-
-  // Active project & audio state
+  // Active Project + Per-Scene Audio + Master Audio state
   const [project, setProject] = useState<CartoonProject | null>(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('autostart') === '1' ? DEMO_PROJECT : null;
+    if (params.get('autostart') === '1') {
+      return params.get('demo') === '2d' ? DEMO_PROJECT : DEMO_3D_PROJECT;
+    }
+    return null;
   });
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('autostart') === '1') {
+      return params.get('demo') === '2d' ? DEMO_PROJECT.id || 'demo-2d' : DEMO_3D_PROJECT.id || 'demo-3d';
+    }
+    return null;
+  });
+  const [sceneAudioMap, setSceneAudioMap] = useState<Record<string, SceneAudioRecord>>({});
   const [audioRaw, setAudioRaw] = useState<ArrayBuffer | null>(null);
   const [audioExt, setAudioExt] = useState('wav');
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
@@ -116,7 +173,6 @@ export default function App() {
 
   // Generation & Export state
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
   const [isExportingMp3, setIsExportingMp3] = useState(false);
   const [genProgressText, setGenProgressText] = useState('');
   const [genProgressPct, setGenProgressPct] = useState(0);
@@ -130,21 +186,16 @@ export default function App() {
   const [exportVideoUrl, setExportVideoUrl] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  // Storage & Toast state
-  const [savedProjects, setSavedProjects] = useState<SavedProjectRecord[]>([]);
-  const [storageSummary, setStorageSummary] = useState<StorageSummary>({
-    supported: true,
-    usageMB: 0,
-    quotaMB: 0,
-    freeMB: 0,
-    ratio: 0,
-    persisted: false,
-  });
+  // Directory & Toast
   const [dirHandle, setDirHandle] = useState<DirHandle | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  // Refs for Web Audio & Canvas
+  // Refs for Web Audio, 2D Canvas, and 3D ThreeSceneStage
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const stage3dContainerRef = useRef<HTMLDivElement | null>(null);
+  const stage3dRef = useRef<ThreeSceneStage | null>(null);
+  const playbackStop3dRef = useRef<(() => void) | null>(null);
+
   const audioCtxRef = useRef<AudioContext | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioGraphRef = useRef<AudioGraphHandle | null>(null);
@@ -153,10 +204,24 @@ export default function App() {
   const exportAbortRef = useRef<AbortController | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
+  // Live refs for reactive rendering inside ThreeSceneStage playback loops
+  const projectRef = useRef(project);
+  projectRef.current = project;
+  const envelopeRef = useRef(envelope);
+  envelopeRef.current = envelope;
+  const speechBoundsRef = useRef(speechBounds);
+  speechBoundsRef.current = speechBounds;
+  const sceneAudioMapRef = useRef(sceneAudioMap);
+  sceneAudioMapRef.current = sceneAudioMap;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  const isLocked = activeWorkspace.hasPassphrase && unlockedKey === null;
+
   const notify = useCallback((msg: string) => {
     setToastMsg(msg);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToastMsg(null), 3600);
+    toastTimerRef.current = window.setTimeout(() => setToastMsg(null), 3800);
   }, []);
 
   const getAudioCtx = useCallback(() => {
@@ -168,6 +233,76 @@ export default function App() {
     }
     return audioCtxRef.current;
   }, []);
+
+  // Load workspace data helper
+  const loadWorkspaceData = useCallback(async (ws: WorkspaceMeta, keyForLocked: CryptoKey | null = null) => {
+    setActiveWorkspace(ws);
+    setActiveWorkspaceId(ws.id);
+    setUnlockedKey(keyForLocked);
+    setSecrets(ws.hasPassphrase ? {} : ws.plainSecrets || {});
+
+    const wsSettings = loadWorkspaceSettings(ws.id);
+    setSettings(wsSettings);
+
+    const [projects, presets, dict, sum] = await Promise.all([
+      listWorkspaceProjects(ws.id),
+      listVoicePresets(ws.id),
+      getPronunciationDict(ws.id),
+      getStorageSummary(),
+    ]);
+    setSavedProjects(projects);
+    setVoicePresets(presets);
+    setDictionary(dict);
+    setStorageSummary(sum);
+  }, []);
+
+  // Bootstrap workspace & hardware capabilities on mount
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const devId = getOrCreateLocalDeviceId();
+      if (mounted) setDeviceId(devId);
+
+      const activeWs = await getActiveWorkspace();
+      const [allWs, hw] = await Promise.all([
+        listWorkspaces(),
+        probeHardwareCapabilities(),
+      ]);
+      if (!mounted) return;
+      setWorkspaces(allWs);
+      setCapabilities(hw);
+      await loadWorkspaceData(activeWs, null);
+
+      // Apply recommended low quality default automatically if running on software WebGL
+      if (hw.isSoftwareGl) {
+        const wsSet = loadWorkspaceSettings(activeWs.id);
+        if (wsSet.previewQuality !== 'low') {
+          const next = { ...wsSet, previewQuality: 'low' as PerformancePreset };
+          saveWorkspaceSettings(activeWs.id, next);
+          if (mounted) setSettings(next);
+        }
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [loadWorkspaceData]);
+
+  // Reload per-scene audio whenever projectId or activeWorkspace changes
+  useEffect(() => {
+    if (!projectId || !activeWorkspace.id || activeWorkspace.id === 'ws_loading') {
+      setSceneAudioMap({});
+      return;
+    }
+    let mounted = true;
+    listProjectSceneAudio(activeWorkspace.id, projectId).then((map) => {
+      if (mounted) setSceneAudioMap(map);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [activeWorkspace.id, projectId]);
 
   const timelineResult = useMemo(() => {
     if (!project) {
@@ -192,14 +327,22 @@ export default function App() {
       sceneDurations: project.sceneDurations,
       pauseCandidates,
       globalOffset: project.globalOffset,
+      sceneAudioMap,
     });
-  }, [project, audioBuffer, speechBounds, pauseCandidates]);
+  }, [project, audioBuffer, speechBounds, pauseCandidates, sceneAudioMap]);
+
+  const timelineResultRef = useRef(timelineResult);
+  timelineResultRef.current = timelineResult;
 
   const stopPlayback = useCallback(() => {
     setIsPlaying(false);
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
+    }
+    if (playbackStop3dRef.current) {
+      playbackStop3dRef.current();
+      playbackStop3dRef.current = null;
     }
     try {
       audioGraphRef.current?.stop();
@@ -209,10 +352,103 @@ export default function App() {
     audioGraphRef.current = null;
   }, []);
 
+  // Initialize / dispose ThreeSceneStage when Studio is open & engine is 3D
+  const is3dProject = Boolean(project && project.renderEngine !== '2d_paper');
+  useEffect(() => {
+    if (activeTab !== 'studio' || !is3dProject) {
+      if (stage3dRef.current) {
+        stage3dRef.current.dispose();
+        stage3dRef.current = null;
+      }
+      return;
+    }
+
+    const container = stage3dContainerRef.current;
+    if (!container) return;
+
+    const stage = new ThreeSceneStage({
+      container,
+      preset: settingsRef.current.previewQuality || 'balanced',
+      style3d: projectRef.current?.style3d || 'cinematic_3d',
+      onContextLost: () => notify('WebGL context ถูกพักชั่วคราว กำลังกู้คืน…'),
+      onContextRestored: () => {
+        if (projectRef.current && stage3dRef.current) {
+          stage3dRef.current.rebuildAllCharacters(projectRef.current);
+        }
+      },
+    });
+    stage3dRef.current = stage;
+
+    if (projectRef.current) {
+      void stage.syncProjectAssets(projectRef.current).then(() => {
+        if (projectRef.current && timelineResultRef.current.timeline.length) {
+          stage.renderFrameAt(projectRef.current, timelineResultRef.current.timeline, currentTime, {
+            envelope: envelopeRef.current,
+            leadSec: timelineResultRef.current.leadSec,
+            speechStartSec: speechBoundsRef.current.ss,
+            subtitleScale: settingsRef.current.subtitleScale,
+            sceneAudioMap: sceneAudioMapRef.current,
+          });
+        }
+      });
+    }
+
+    return () => {
+      stage.dispose();
+      if (stage3dRef.current === stage) stage3dRef.current = null;
+    };
+    // Mount once per entering Studio in 3D mode; asset updates handled cleanly below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, is3dProject]);
+
+  // Sync 3D character rigs / quality preset changes without tearing down WebGLRenderer
+  const charDigest = useMemo(
+    () => (project ? JSON.stringify(project.characters) + '|' + (project.style3d || '') : ''),
+    [project]
+  );
+
+  useEffect(() => {
+    const stage = stage3dRef.current;
+    if (!stage || !project || !is3dProject || activeTab !== 'studio') return;
+    stage.rebuildAllCharacters(project);
+    const tmr = window.setTimeout(() => {
+      if (stage3dRef.current === stage && timelineResultRef.current.timeline.length) {
+        stage.renderFrameAt(project, timelineResultRef.current.timeline, currentTime, {
+          envelope: envelopeRef.current,
+          leadSec: timelineResultRef.current.leadSec,
+          speechStartSec: speechBoundsRef.current.ss,
+          subtitleScale: settings.subtitleScale,
+          sceneAudioMap: sceneAudioMapRef.current,
+        });
+      }
+    }, 60);
+    return () => window.clearTimeout(tmr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [charDigest]);
+
+  useEffect(() => {
+    const stage = stage3dRef.current;
+    if (stage) {
+      stage.setPerformancePreset(settings.previewQuality);
+    }
+  }, [settings.previewQuality]);
+
   const drawAt = useCallback(
     (t: number) => {
+      if (!project || !timelineResult.timeline.length) return;
+      if (project.renderEngine !== '2d_paper') {
+        stage3dRef.current?.renderFrameAt(project, timelineResult.timeline, t, {
+          envelope,
+          leadSec: timelineResult.leadSec,
+          speechStartSec: speechBounds.ss,
+          subtitleScale: settings.subtitleScale,
+          sceneAudioMap,
+        });
+        return;
+      }
+
       const canvas = canvasRef.current;
-      if (!canvas || !project || !timelineResult.timeline.length) return;
+      if (!canvas) return;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       renderCartoonFrame(ctx, project, timelineResult.timeline, t, {
@@ -225,17 +461,17 @@ export default function App() {
         cineEnabled: project.cineLayer?.enabled,
       });
     },
-    [project, timelineResult, envelope, speechBounds.ss, settings.subtitleScale, pauseCandidates]
+    [project, timelineResult, envelope, speechBounds.ss, settings.subtitleScale, pauseCandidates, sceneAudioMap]
   );
 
-  // Clamp currentTime if timeline duration shrinks (e.g. deleting scenes or setting shorter manual duration)
+  // Clamp currentTime if timeline shrinks
   useEffect(() => {
     if (!isPlaying && timelineResult.totalDuration > 0 && currentTime > timelineResult.totalDuration) {
       setCurrentTime(Math.max(0, Number((timelineResult.totalDuration - 0.05).toFixed(2))));
     }
   }, [isPlaying, currentTime, timelineResult.totalDuration]);
 
-  // Redraw canvas whenever frame time or project changes while paused
+  // Redraw whenever paused frame time or project changes
   useEffect(() => {
     if (!isPlaying && activeTab === 'studio') {
       drawAt(currentTime);
@@ -271,20 +507,30 @@ export default function App() {
       playStartCtxTimeRef.current = baseCtxTime - fromSec;
       setIsPlaying(true);
 
-      const tick = () => {
+      const handleTick = () => {
         const elapsed = ctx.currentTime - playStartCtxTimeRef.current;
         if (elapsed >= timelineResult.totalDuration) {
           setCurrentTime(timelineResult.totalDuration);
           stopPlayback();
           drawAt(timelineResult.totalDuration);
-          return;
+          return false;
         }
         audioGraphRef.current?.schedulerTick(elapsed);
         setCurrentTime(elapsed);
         drawAt(elapsed);
-        rafRef.current = requestAnimationFrame(tick);
+        return true;
       };
-      rafRef.current = requestAnimationFrame(tick);
+
+      if (project.renderEngine !== '2d_paper' && stage3dRef.current) {
+        playbackStop3dRef.current = stage3dRef.current.createPlaybackLoop(() => handleTick());
+      } else {
+        const tick = () => {
+          if (handleTick()) {
+            rafRef.current = requestAnimationFrame(tick);
+          }
+        };
+        rafRef.current = requestAnimationFrame(tick);
+      }
     },
     [
       project,
@@ -335,32 +581,22 @@ export default function App() {
     });
   }, []);
 
-  const refreshProjectsAndStorage = useCallback(async () => {
-    const [list, sum] = await Promise.all([listProjectsFromDB(), getStorageSummary()]);
-    setSavedProjects(list);
-    setStorageSummary(sum);
-  }, []);
-
-  const checkHealth = useCallback(async () => {
-    try {
-      const res = await fetch('/api/health');
-      const data = await res.json();
-      setAiHealth(data);
-    } catch {
-      setAiHealth({ ok: false, aiReady: false });
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshProjectsAndStorage();
-    checkHealth();
-  }, [refreshProjectsAndStorage, checkHealth]);
-
   useEffect(() => {
     return () => {
       stopPlayback();
     };
   }, [stopPlayback]);
+
+  const refreshWorkspaceLists = useCallback(async (wsId = activeWorkspace.id) => {
+    const [allWs, projs, sum] = await Promise.all([
+      listWorkspaces(),
+      listWorkspaceProjects(wsId),
+      getStorageSummary(),
+    ]);
+    setWorkspaces(allWs);
+    setSavedProjects(projs);
+    setStorageSummary(sum);
+  }, [activeWorkspace.id]);
 
   const decodeAudioBytes = useCallback(
     async (raw: ArrayBuffer, useExactDurations = false) => {
@@ -389,246 +625,88 @@ export default function App() {
       existingId: string | null,
       silent = false
     ) => {
-      const id = existingId || crypto.randomUUID();
+      const id = existingId || proj.id || `proj_${generateUuid()}`;
       let thumb: string | null = null;
       try {
         const tmp = document.createElement('canvas');
         tmp.width = 90;
         tmp.height = 160;
-        const off = document.createElement('canvas');
-        off.width = CANVAS_W;
-        off.height = CANVAS_H;
-        const offCtx = off.getContext('2d');
-        if (offCtx) {
-          const tl = buildTimeline(proj.scenes, { sceneDurations: proj.sceneDurations });
-          renderCartoonFrame(offCtx, proj, tl.timeline, 0.8, {
-            envelope: [],
-            subtitleScale: settings.subtitleScale,
-          });
-          tmp.getContext('2d')?.drawImage(off, 0, 0, 90, 160);
+        if (proj.renderEngine !== '2d_paper' && stage3dRef.current) {
+          tmp.getContext('2d')?.drawImage(stage3dRef.current.getWebGLCanvas(), 0, 0, 90, 160);
           thumb = tmp.toDataURL('image/jpeg', 0.65);
+        } else {
+          const off = document.createElement('canvas');
+          off.width = CANVAS_W;
+          off.height = CANVAS_H;
+          const offCtx = off.getContext('2d');
+          if (offCtx) {
+            const tl = buildTimeline(proj.scenes, { sceneDurations: proj.sceneDurations });
+            renderCartoonFrame(offCtx, proj, tl.timeline, 0.8, {
+              envelope: [],
+              subtitleScale: settings.subtitleScale,
+            });
+            tmp.getContext('2d')?.drawImage(off, 0, 0, 90, 160);
+            thumb = tmp.toDataURL('image/jpeg', 0.65);
+          }
         }
       } catch {
         thumb = null;
       }
 
-      await saveProjectToDB({
+      const projWithId = { ...proj, id };
+      await saveWorkspaceProject(activeWorkspace.id, {
         id,
+        workspaceId: activeWorkspace.id,
         title: proj.title || 'ไม่มีชื่อเรื่อง',
-        data: proj,
+        data: projWithId,
         audio: rawAudio,
         ext,
         video: videoBlob,
         thumb,
         at: Date.now(),
       });
+      setProject(projWithId);
       setProjectId(id);
-      await refreshProjectsAndStorage();
-      if (!silent) notify('บันทึกโปรเจกต์ลงฐานข้อมูลในเครื่องแล้ว');
+      await refreshWorkspaceLists(activeWorkspace.id);
+      if (!silent) notify(`บันทึก "${proj.title}" ลง Workspace "${activeWorkspace.name}" แล้ว`);
       return id;
     },
-    [settings.subtitleScale, refreshProjectsAndStorage, notify]
+    [activeWorkspace.id, activeWorkspace.name, settings.subtitleScale, refreshWorkspaceLists, notify]
   );
 
-  const synthesizeVoicesForProject = useCallback(
-    async (proj: CartoonProject): Promise<{
-      raw: ArrayBuffer;
-      ext: string;
-      sceneDurations?: number[];
-    }> => {
-      const scenes = proj.scenes.map((s) => s.narration);
+  // Determine whether active AI script provider has key configured
+  const hasActiveAiKey = useMemo(() => {
+    if (settings.aiProvider === 'openrouter') return Boolean(secrets.openRouterKey?.trim());
+    if (settings.aiProvider === 'openai') return Boolean(secrets.openAiKey?.trim());
+    if (settings.aiProvider === 'gemini_byok') return Boolean(secrets.geminiKey?.trim());
+    return true; // server_gemini fallback
+  }, [settings.aiProvider, secrets]);
 
-      if (settings.ttsProvider === 'pythai') {
-        const resp = await fetch('/api/tts-pythai', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            scenes,
-            endpoint: settings.pythaiEndpoint,
-            model: settings.pythaiModel,
-            speaker: settings.pythaiSpeaker,
-          }),
-        });
-        const data = (await resp.json()) as {
-          audioBase64?: string;
-          sceneDurations?: number[];
-          error?: string;
-        };
-        if (!resp.ok || !data.audioBase64) {
-          throw new Error(data.error || `PyThaiTTS HTTP ${resp.status}`);
-        }
-        return {
-          raw: base64ToArrayBuffer(data.audioBase64),
-          ext: 'wav',
-          sceneDurations: data.sceneDurations,
-        };
-      }
-
-      if (settings.ttsProvider === 'openai_compatible') {
-        const apiKey = getSavedCustomTtsKey();
-        const resp = await fetch('/api/tts-custom', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            endpoint: settings.customTtsEndpoint,
-            apiKey,
-            model: settings.customTtsModel,
-            voice: settings.customTtsVoice,
-            scenes,
-          }),
-        });
-        const data = (await resp.json()) as { audioBase64?: string; error?: string };
-        if (!resp.ok || !data.audioBase64) {
-          throw new Error(data.error || `Custom TTS HTTP ${resp.status}`);
-        }
-        return {
-          raw: base64ToArrayBuffer(data.audioBase64),
-          ext: 'mp3',
-        };
-      }
-
-      // Default: Built-in Gemini TTS
-      const resp = await fetch('/api/generate-tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scenes,
-          voiceName: settings.voiceName,
-          stylePrompt: settings.voiceStyle,
-        }),
-      });
-      const data = (await resp.json()) as {
-        audioBase64?: string;
-        sceneDurations?: number[];
-        error?: string;
-      };
-      if (!resp.ok || !data.audioBase64) {
-        throw new Error(data.error || `HTTP ${resp.status}`);
-      }
-      return {
-        raw: base64ToArrayBuffer(data.audioBase64),
-        ext: 'wav',
-        sceneDurations: data.sceneDurations,
-      };
-    },
-    [settings]
-  );
-
-  async function handleGenerateCartoon() {
+  // Step 1: Generate AI Director Production Plan (editable review gate)
+  async function handleGeneratePlan() {
     if (!topic.trim()) {
-      setGenError('กรุณากรอกหัวข้อเรื่องก่อนกดสร้างการ์ตูน');
+      setGenError('กรุณากรอกหัวข้อเรื่องก่อนกดให้ AI Director ออกแบบแผน');
       return;
     }
-
     stopPlayback();
     setGenError(null);
     setIsGenerating(true);
-    setGenProgressText(
-      settings.aiProvider === 'openrouter'
-        ? `กำลังเขียนบทผ่าน OpenRouter (${settings.openRouterModel})…`
-        : 'AI กำลังเขียนบท ออกแบบตัวละคร และวางฉาก…'
-    );
-    setGenProgressPct(22);
+    setGenProgressText('AI Director กำลังวิเคราะห์เรื่อง วาง Production Plan และ Shot List…');
+    setGenProgressPct(45);
 
     try {
-      let generatedProj: CartoonProject;
-
-      if (settings.aiProvider === 'openrouter') {
-        const key = getSavedOpenRouterKey();
-        if (!key) {
-          throw new Error('กรุณาเพิ่ม OpenRouter API Key ในหน้า "ตั้งค่า" ก่อนใช้งาน');
-        }
-        generatedProj = await generateScriptViaOpenRouter({
-          apiKey: key,
-          model: settings.openRouterModel,
-          selection,
-          topic: topic.trim(),
-          facts: facts.trim(),
-        });
-      } else {
-        const scriptResp = await fetch('/api/generate-script', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mode: selection.mode,
-            genre: selection.genre,
-            audience: selection.audience,
-            lengthSec: selection.len,
-            style: selection.style,
-            layout: selection.layout,
-            topText: selection.topText,
-            bottomText: selection.bottomText,
-            subtitleStyle: selection.subtitleStyle,
-            hudEnabled: selection.hudEnabled,
-            cineEnabled: selection.cineEnabled,
-            end: selection.end,
-            topic: topic.trim(),
-            facts: facts.trim(),
-          }),
-        });
-
-        const scriptData = (await scriptResp.json()) as {
-          project?: CartoonProject;
-          error?: string;
-        };
-        if (!scriptResp.ok || !scriptData.project) {
-          throw new Error(scriptData.error || 'สร้างบทการ์ตูนไม่สำเร็จ');
-        }
-
-        generatedProj = normalizeProject(scriptData.project, {
-          style: selection.style,
-          end: selection.end,
-          layout: selection.layout,
-          topText: selection.topText,
-          bottomText: selection.bottomText,
-          subtitleStyle: selection.subtitleStyle,
-          hudEnabled: selection.hudEnabled,
-          cineEnabled: selection.cineEnabled,
-        });
-      }
-
-      setGenProgressText('กำลังสังเคราะห์เสียงพากย์ภาษาไทย…');
-      setGenProgressPct(62);
-
-      let nextAudioRaw: ArrayBuffer | null = null;
-      let nextExt = 'wav';
-      let nextNote = 'สร้างบทและเสียงพากย์เสร็จสมบูรณ์';
-
-      try {
-        const ttsOut = await synthesizeVoicesForProject(generatedProj);
-        nextAudioRaw = ttsOut.raw;
-        nextExt = ttsOut.ext;
-        if (ttsOut.sceneDurations && ttsOut.sceneDurations.length === generatedProj.scenes.length) {
-          generatedProj = { ...generatedProj, sceneDurations: ttsOut.sceneDurations };
-        }
-        await decodeAudioBytes(nextAudioRaw, Boolean(ttsOut.sceneDurations));
-      } catch (ttsErr) {
-        const msg = ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
-        nextNote = `ยังไม่มีเสียงพากย์ (${msg}) — สามารถสลับไปใช้ PyThaiTTS / Gemini TTS หรือนำเข้าเสียงเองได้`;
-        setAudioBuffer(null);
-        setEnvelope([]);
-        setPauseCandidates([]);
-      }
-
-      setAudioRaw(nextAudioRaw);
-      setAudioExt(nextExt);
-      setAudioNote(nextNote);
-      setExportResult(null);
-      if (exportVideoUrl) {
-        URL.revokeObjectURL(exportVideoUrl);
-        setExportVideoUrl(null);
-      }
-      setProject(generatedProj);
-      setCurrentTime(0);
-
-      setGenProgressText('กำลังจัดเก็บโปรเจกต์…');
-      setGenProgressPct(92);
-      await persistProject(generatedProj, nextAudioRaw, nextExt, null, null, true);
-
-      setGenProgressText('พร้อมรับชมในสตูดิโอแล้ว');
+      const planProj = await generateDirectorPlan({
+        provider: settings.aiProvider,
+        settings,
+        secrets,
+        selection,
+        topic: topic.trim(),
+        facts: facts.trim(),
+      });
+      setDraftPlanProject(planProj);
+      setGenProgressText('วาง Production Plan สำเร็จ! ตรวจสอบและแก้ไขได้ด้านบนก่อนอนุมัติ');
       setGenProgressPct(100);
-      setActiveTab('studio');
-      notify('สร้างการ์ตูนเรียบร้อยแล้ว');
+      notify('AI Director สร้าง Production Plan แล้ว — ตรวจสอบก่อนเข้าสู่สตูดิโอ');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setGenError(msg);
@@ -639,51 +717,144 @@ export default function App() {
     }
   }
 
-  function handleImportOutputG(imported: CartoonProject) {
+  async function handleApprovePlan(approved: CartoonProject) {
     stopPlayback();
-    setProject(imported);
-    setProjectId(null);
+    const id = approved.id || `proj_${generateUuid()}`;
+    const cleanProj = { ...approved, id };
+    setDraftPlanProject(null);
+    setProject(cleanProj);
+    setProjectId(id);
     setAudioRaw(null);
     setAudioBuffer(null);
     setEnvelope([]);
     setPauseCandidates([]);
     setSpeechBounds({ ss: 0 });
-    setAudioNote('นำเข้าแพ็กเกจ OUTPUT G เรียบร้อย กด "พากย์เสียง AI" หรือ "นำเข้าเสียงพากย์" เพื่อซิงก์');
-    setExportResult(null);
+    setAudioNote('อนุมัติ Production Plan แล้ว — ไปที่เมนู "ห้องพากย์" เพื่อพากย์เสียงทีละฉากหรือทั้งหมด');
     if (exportVideoUrl) {
       URL.revokeObjectURL(exportVideoUrl);
       setExportVideoUrl(null);
     }
+    setExportResult(null);
     setCurrentTime(0);
+    await persistProject(cleanProj, null, 'wav', null, id, true);
     setActiveTab('studio');
-    notify(`นำเข้า "${imported.title}" สำเร็จ`);
+    notify('เปิดโปรเจกต์ในสตูดิโอ 3D แล้ว');
   }
 
-  async function handleRegenerateAudio() {
-    if (!project) return;
+  function handleImportOutputG(imported: CartoonProject) {
     stopPlayback();
-    setIsGeneratingAudio(true);
-    setAudioNote('กำลังสังเคราะห์เสียงพากย์ใหม่จากบทปัจจุบัน…');
-    try {
-      const ttsOut = await synthesizeVoicesForProject(project);
-      const nextProj =
-        ttsOut.sceneDurations && ttsOut.sceneDurations.length === project.scenes.length
-          ? { ...project, sceneDurations: ttsOut.sceneDurations }
-          : project;
-      setProject(nextProj);
-      setAudioRaw(ttsOut.raw);
-      setAudioExt(ttsOut.ext);
-      await decodeAudioBytes(ttsOut.raw, Boolean(ttsOut.sceneDurations));
-      setAudioNote('สร้างเสียงพากย์ใหม่เสร็จสมบูรณ์และซิงก์เข้ากับทุกฉากแล้ว');
-      notify('อัปเดตเสียงพากย์เรียบร้อย');
-      await persistProject(nextProj, ttsOut.raw, ttsOut.ext, exportResult?.blob ?? null, projectId, true);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setAudioNote(`สังเคราะห์เสียงไม่สำเร็จ: ${msg}`);
-      notify(msg);
-    } finally {
-      setIsGeneratingAudio(false);
+    const id = imported.id || `proj_${generateUuid()}`;
+    const cleanProj = { ...imported, id };
+    setProject(cleanProj);
+    setProjectId(id);
+    setAudioRaw(null);
+    setAudioBuffer(null);
+    setEnvelope([]);
+    setPauseCandidates([]);
+    setSpeechBounds({ ss: 0 });
+    setAudioNote('นำเข้า JSON / OUTPUT G สำเร็จ — ไปที่ "ห้องพากย์" เพื่อพากย์เสียงไทย หรือนำเข้าไฟล์เสียง');
+    if (exportVideoUrl) {
+      URL.revokeObjectURL(exportVideoUrl);
+      setExportVideoUrl(null);
     }
+    setExportResult(null);
+    setCurrentTime(0);
+    setActiveTab('studio');
+    notify(`นำเข้า "${cleanProj.title}" สำเร็จ`);
+  }
+
+  function handleOpenDemo3D() {
+    stopPlayback();
+    const id = DEMO_3D_PROJECT.id || 'demo-3d-riverside';
+    setProject({ ...DEMO_3D_PROJECT, id });
+    setProjectId(id);
+    setAudioRaw(null);
+    setAudioBuffer(null);
+    setEnvelope([]);
+    setPauseCandidates([]);
+    setSpeechBounds({ ss: 0 });
+    setAudioNote('โปรเจกต์ตัวอย่าง 3D ("คืนโคมไฟริมน้ำ") — กดเล่นเพื่อดูกล้อง 3D หรือไปห้องพากย์เพื่อใส่เสียงไทย');
+    if (exportVideoUrl) {
+      URL.revokeObjectURL(exportVideoUrl);
+      setExportVideoUrl(null);
+    }
+    setExportResult(null);
+    setCurrentTime(0);
+    setActiveTab('studio');
+  }
+
+  function handleOpenDemo2D() {
+    stopPlayback();
+    const id = DEMO_PROJECT.id || 'demo-paper-sketch';
+    setProject({ ...DEMO_PROJECT, id });
+    setProjectId(id);
+    setAudioRaw(null);
+    setAudioBuffer(null);
+    setEnvelope([]);
+    setPauseCandidates([]);
+    setSpeechBounds({ ss: 0 });
+    setAudioNote('โปรเจกต์ตัวอย่าง 2D PAPER-SKETCH ("สวัสดีวันจันทร์") — รักษาความสามารถเดิมครบถ้วน');
+    if (exportVideoUrl) {
+      URL.revokeObjectURL(exportVideoUrl);
+      setExportVideoUrl(null);
+    }
+    setExportResult(null);
+    setCurrentTime(0);
+    setActiveTab('studio');
+  }
+
+  async function handleOpenSavedProject(id: string) {
+    const rec = savedProjects.find((p) => p.id === id);
+    if (!rec) return;
+    stopPlayback();
+    setProject(rec.data);
+    setProjectId(rec.id);
+    setAudioRaw(rec.audio);
+    setAudioExt(rec.ext || 'wav');
+
+    if (rec.audio) {
+      try {
+        await decodeAudioBytes(rec.audio, Boolean(rec.data.sceneDurations?.length));
+        setAudioNote('โหลดเสียงพากย์ที่บันทึกไว้แล้ว');
+      } catch {
+        setAudioBuffer(null);
+        setEnvelope([]);
+        setPauseCandidates([]);
+        setAudioNote('ไฟล์เสียงที่บันทึกไว้ไม่สามารถถอดรหัสได้');
+      }
+    } else {
+      setAudioBuffer(null);
+      setEnvelope([]);
+      setPauseCandidates([]);
+      setAudioNote('โปรเจกต์นี้ยังไม่มีเสียงพากย์รวม สามารถสร้างใน "ห้องพากย์" หรือนำเข้าเสียงเองได้');
+    }
+
+    if (exportVideoUrl) URL.revokeObjectURL(exportVideoUrl);
+    if (rec.video) {
+      const url = URL.createObjectURL(rec.video);
+      setExportVideoUrl(url);
+      setExportResult({
+        blob: rec.video,
+        mimeType: rec.video.type || 'video/mp4',
+        ext: rec.video.type.includes('webm') ? 'webm' : 'mp4',
+        durationSec: null,
+        hasAudioTrack: Boolean(rec.audio),
+        audioVerifiedStatus: rec.audio ? 'detected' : 'unverifiable',
+        usedScale: 1,
+        usedWidth: 720,
+        usedHeight: 1280,
+        usedFps: settings.exportFps || 30,
+        usedCodec: 'avc1.42001f',
+        usedAudioCodec: 'aac',
+        downscaleWarning: null,
+      });
+    } else {
+      setExportVideoUrl(null);
+      setExportResult(null);
+    }
+
+    setCurrentTime(0);
+    setActiveTab('studio');
   }
 
   async function handleImportAudio(file: File) {
@@ -705,76 +876,37 @@ export default function App() {
     }
   }
 
-  function handleOpenDemo() {
+  // Merge per-scene audio blobs into master timeline AudioBuffer & envelope
+  async function handleMergeAllAudioToStudio() {
+    if (!project) return;
     stopPlayback();
-    setProject(DEMO_PROJECT);
-    setProjectId(null);
-    setAudioRaw(null);
-    setAudioBuffer(null);
-    setEnvelope([]);
-    setPauseCandidates([]);
-    setSpeechBounds({ ss: 0 });
-    setAudioNote('ตัวอย่างสไตล์ PAPER-SKETCH ("สวัสดีวันจันทร์ · บ้านเรา 7 คน") — กดพากย์เสียง AI หรือปรับเวลาได้ทันที');
-    setExportResult(null);
-    if (exportVideoUrl) {
-      URL.revokeObjectURL(exportVideoUrl);
-      setExportVideoUrl(null);
-    }
-    setCurrentTime(0);
-    setActiveTab('studio');
-  }
-
-  async function handleOpenSavedProject(id: string) {
-    const rec = await getProjectFromDB(id);
-    if (!rec) return;
-    stopPlayback();
-    setProject(rec.data);
-    setProjectId(rec.id);
-    setAudioRaw(rec.audio);
-    setAudioExt(rec.ext || 'wav');
-
-    if (rec.audio) {
-      try {
-        await decodeAudioBytes(rec.audio, Boolean(rec.data.sceneDurations?.length));
-        setAudioNote('โหลดเสียงพากย์ที่บันทึกไว้แล้ว');
-      } catch {
-        setAudioBuffer(null);
-        setEnvelope([]);
-        setPauseCandidates([]);
-        setAudioNote('ไฟล์เสียงที่บันทึกไว้ไม่สามารถอ่านได้');
+    try {
+      const ctx = getAudioCtx();
+      const merged = await mergeSceneAudioRecordsToBuffer(ctx, project.scenes, sceneAudioMap);
+      if (!merged.voiceBuffer || !merged.rawWav) {
+        notify('ยังไม่มีไฟล์เสียงพากย์รายฉากในโปรเจกต์นี้');
+        return;
       }
-    } else {
-      setAudioBuffer(null);
-      setEnvelope([]);
-      setPauseCandidates([]);
-      setAudioNote('โปรเจกต์นี้ยังไม่มีเสียงพากย์ สามารถกดพากย์เสียง AI หรือนำเข้าเสียงเองได้');
+      const nextProj: CartoonProject = {
+        ...project,
+        sceneDurations: merged.sceneDurations,
+      };
+      setProject(nextProj);
+      setAudioBuffer(merged.voiceBuffer);
+      setAudioRaw(merged.rawWav);
+      setAudioExt('wav');
+      setEnvelope(merged.envelope);
+      setPauseCandidates(merged.pauseCandidates);
+      setSpeechBounds({ ss: merged.speechStartSec, se: merged.speechEndSec });
+      setAudioNote(
+        `รวมเสียงพากย์ ${Object.keys(sceneAudioMap).length} ฉากเข้า Timeline แล้ว (${merged.voiceBuffer.duration.toFixed(1)}s)`
+      );
+      await persistProject(nextProj, merged.rawWav, 'wav', exportResult?.blob ?? null, projectId, true);
+      setActiveTab('studio');
+      notify('รวมเสียงทุกฉากเข้า Timeline และซิงก์ Lip-Sync แล้ว');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'รวมเสียงไม่สำเร็จ');
     }
-
-    if (exportVideoUrl) URL.revokeObjectURL(exportVideoUrl);
-    if (rec.video) {
-      const url = URL.createObjectURL(rec.video);
-      setExportVideoUrl(url);
-      setExportResult({
-        blob: rec.video,
-        mimeType: 'video/mp4',
-        ext: 'mp4',
-        durationSec: null,
-        hasAudioTrack: Boolean(rec.audio),
-        audioVerifiedStatus: rec.audio ? 'detected' : 'unverifiable',
-        usedScale: 1,
-        usedWidth: 720,
-        usedHeight: 1280,
-        usedCodec: 'avc1.42001f',
-        usedAudioCodec: 'aac',
-        downscaleWarning: null,
-      });
-    } else {
-      setExportVideoUrl(null);
-      setExportResult(null);
-    }
-
-    setCurrentTime(0);
-    setActiveTab('studio');
   }
 
   const handleRunPreflight = useCallback(async () => {
@@ -787,12 +919,12 @@ export default function App() {
     setPreflight(res);
   }, [audioBuffer, settings.defaultRes]);
 
-  async function handleExportVideo() {
+  async function handleExportVideo(forceFormat: 'auto' | 'webm' = 'auto') {
     if (!project) return;
     stopPlayback();
     setExportError(null);
     setIsExporting(true);
-    setExportProgressText('เตรียมตัวเข้ารหัส MP4…');
+    setExportProgressText('เตรียมตัวเข้ารหัสวิดีโอ…');
     setExportProgressPct(2);
 
     const ac = new AbortController();
@@ -810,10 +942,14 @@ export default function App() {
         leadSec: timelineResult.leadSec,
         speechStartSec: speechBounds.ss,
         pauseCandidates,
+        sceneAudioMap,
         voiceBuffer: audioBuffer,
         enableBgmAndSfx: settings.enableBgmAndSfx,
         cineEnabled: Boolean(project.cineLayer?.enabled),
         want1080: settings.defaultRes === '1080',
+        fps: settings.exportFps || 30,
+        performancePreset: settings.performancePreset || 'high',
+        forceFormat,
         subtitleScale: settings.subtitleScale,
         signal: ac.signal,
         onProgress: (msg, pct) => {
@@ -826,10 +962,9 @@ export default function App() {
       const url = URL.createObjectURL(res.blob);
       setExportResult(res);
       setExportVideoUrl(url);
-      // Try auto-download once (not relied upon exclusively — player + 4 buttons always remain visible)
-      triggerDownload(res.blob, `${sanitizeFilename(project.title)}.mp4`);
+      triggerDownload(res.blob, `${sanitizeFilename(project.title)}.${res.ext}`);
       await persistProject(project, audioRaw, audioExt, res.blob, projectId, true);
-      notify('สร้างและตรวจสอบไฟล์ MP4 เสร็จสมบูรณ์');
+      notify(`สร้างและตรวจสอบไฟล์ ${res.ext.toUpperCase()} เสร็จสมบูรณ์`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setExportError(msg);
@@ -867,8 +1002,8 @@ export default function App() {
 
   async function handleShareVideo() {
     if (!exportResult || !project) return;
-    const filename = `${sanitizeFilename(project.title)}.mp4`;
-    const file = new File([exportResult.blob], filename, { type: 'video/mp4' });
+    const filename = `${sanitizeFilename(project.title)}.${exportResult.ext}`;
+    const file = new File([exportResult.blob], filename, { type: exportResult.mimeType });
     if (navigator.canShare?.({ files: [file] })) {
       try {
         await navigator.share({ files: [file], title: project.title });
@@ -876,7 +1011,7 @@ export default function App() {
         // cancelled
       }
     } else {
-      notify('เบราว์เซอร์นี้ไม่รองรับการแชร์ไฟล์โดยตรง กรุณาใช้ปุ่มดาวน์โหลด MP4');
+      notify('เบราว์เซอร์นี้ไม่รองรับการแชร์ไฟล์โดยตรง กรุณาใช้ปุ่มดาวน์โหลดวิดีโอ');
     }
   }
 
@@ -909,27 +1044,33 @@ export default function App() {
       );
       notify(mode === 'folder' ? 'บันทึกไฟล์ลงโฟลเดอร์เรียบร้อย' : 'เริ่มดาวน์โหลดไฟล์โปรเจกต์แล้ว');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      notify(msg);
+      notify(err instanceof Error ? err.message : 'บันทึกไม่สำเร็จ');
     }
   }
 
-  function handleUpdateSettings(next: StudioSettings) {
-    setSettings(next);
-    saveStudioSettings(next);
-  }
+  const handleUpdateSettings = useCallback(
+    (next: StudioSettings) => {
+      setSettings(next);
+      saveWorkspaceSettings(activeWorkspace.id, next);
+    },
+    [activeWorkspace.id]
+  );
 
   return (
-    <div className="min-h-screen bg-[#0a0b10] text-[#f3f2fa] pb-20 md:pb-8">
+    <div className="min-h-screen bg-[#0a0b10] text-[#f3f2fa] pb-16 md:pb-8">
       <TopBar
         activeTab={activeTab}
         onChangeTab={(tab) => {
           if (tab !== 'studio') stopPlayback();
           setActiveTab(tab);
-          if (tab === 'projects') refreshProjectsAndStorage();
+          if (tab === 'projects' || tab === 'storage') {
+            void refreshWorkspaceLists(activeWorkspace.id);
+          }
         }}
         hasProject={Boolean(project)}
-        onOpenDemo={handleOpenDemo}
+        workspaceName={activeWorkspace.name}
+        isLocked={isLocked}
+        onOpenDemo3D={handleOpenDemo3D}
       />
 
       <main>
@@ -941,32 +1082,86 @@ export default function App() {
             onChangeTopic={setTopic}
             facts={facts}
             onChangeFacts={setFacts}
-            voiceName={settings.voiceName}
-            onChangeVoice={(voice: VoiceName) =>
-              handleUpdateSettings({ ...settings, voiceName: voice })
-            }
             aiProvider={settings.aiProvider}
-            openRouterModel={settings.openRouterModel}
-            ttsProvider={settings.ttsProvider}
+            hasActiveKey={hasActiveAiKey}
             isGenerating={isGenerating}
             progressText={genProgressText}
             progressPct={genProgressPct}
             errorText={genError}
-            onGenerate={handleGenerateCartoon}
+            draftPlanProject={draftPlanProject}
+            onGeneratePlan={handleGeneratePlan}
+            onApprovePlan={handleApprovePlan}
+            onDiscardPlan={() => setDraftPlanProject(null)}
             onImportOutputG={handleImportOutputG}
-            onLoadDemo={handleOpenDemo}
+            onLoadDemo3D={handleOpenDemo3D}
+            onLoadDemo2D={handleOpenDemo2D}
             onGoSettings={() => setActiveTab('settings')}
             savedProjects={savedProjects}
             onOpenProject={handleOpenSavedProject}
           />
         )}
 
+        {activeTab === 'characters' && (
+          <CharactersView
+            workspaceId={activeWorkspace.id}
+            project={project}
+            onUpdateProject={setProject}
+            onOpenDemo3D={handleOpenDemo3D}
+            onNotify={notify}
+          />
+        )}
+
+        {activeTab === 'voice' && (
+          <VoiceStudioView
+            workspaceId={activeWorkspace.id}
+            project={project}
+            settings={settings}
+            secrets={secrets}
+            voicePresets={voicePresets}
+            dictionary={dictionary}
+            sceneAudioMap={sceneAudioMap}
+            onUpdateSettings={handleUpdateSettings}
+            onUpdateProject={setProject}
+            onSaveVoicePreset={async (preset) => {
+              await saveVoicePreset(activeWorkspace.id, preset);
+              setVoicePresets(await listVoicePresets(activeWorkspace.id));
+            }}
+            onDeleteVoicePreset={async (id) => {
+              await deleteVoicePreset(id);
+              setVoicePresets(await listVoicePresets(activeWorkspace.id));
+            }}
+            onSaveDictionary={async (entries) => {
+              await savePronunciationDict(activeWorkspace.id, entries);
+              setDictionary(entries);
+            }}
+            onSaveSceneAudio={async (rec) => {
+              await saveSceneAudioRecord(rec);
+              setSceneAudioMap((prev) => ({ ...prev, [rec.sceneId]: rec }));
+            }}
+            onMergeAllAudioToStudio={handleMergeAllAudioToStudio}
+            onOpenDemo3D={handleOpenDemo3D}
+            onGoSettings={() => setActiveTab('settings')}
+            onNotify={notify}
+          />
+        )}
+
+        {activeTab === 'director' && (
+          <SceneDirectorView
+            project={project}
+            onUpdateProject={setProject}
+            onOpenDemo3D={handleOpenDemo3D}
+            onGoStudio={() => setActiveTab('studio')}
+          />
+        )}
+
         {activeTab === 'studio' && (
           <StudioView
             canvasRef={canvasRef}
+            stage3dContainerRef={stage3dContainerRef}
             project={project}
             timeline={timelineResult.timeline}
             syncDiagnostics={timelineResult.syncDiagnostics}
+            capabilities={capabilities}
             currentTime={currentTime}
             totalDuration={timelineResult.totalDuration}
             isPlaying={isPlaying}
@@ -974,9 +1169,11 @@ export default function App() {
             hasAudio={Boolean(audioRaw)}
             audioExt={audioExt}
             audioNote={audioNote}
-            isGeneratingAudio={isGeneratingAudio}
             isExportingMp3={isExportingMp3}
+            previewQuality={settings.previewQuality}
+            exportQuality={settings.performancePreset}
             exportResolution={settings.defaultRes}
+            exportFps={settings.exportFps}
             subtitleScale={settings.subtitleScale}
             preflight={preflight}
             isExporting={isExporting}
@@ -989,18 +1186,20 @@ export default function App() {
             onSeek={handleSeek}
             onToggleMute={handleToggleMute}
             onImportAudio={handleImportAudio}
-            onRegenerateAudio={handleRegenerateAudio}
+            onGoVoiceStudio={() => setActiveTab('voice')}
+            onGoDirector={() => setActiveTab('director')}
             onDownloadMp3={handleDownloadMp3}
             onSaveProject={() =>
               project &&
               persistProject(project, audioRaw, audioExt, exportResult?.blob ?? null, projectId)
             }
             onSaveLocal={handleSaveLocal}
-            onUpdateProject={(next) => setProject(next)}
+            onUpdateProject={setProject}
+            onChangePreviewQuality={(q) => handleUpdateSettings({ ...settings, previewQuality: q })}
+            onChangeExportQuality={(q) => handleUpdateSettings({ ...settings, performancePreset: q })}
             onChangeExportRes={(res) => handleUpdateSettings({ ...settings, defaultRes: res })}
-            onChangeSubtitleScale={(scale) =>
-              handleUpdateSettings({ ...settings, subtitleScale: scale })
-            }
+            onChangeExportFps={(fps: ExportFps) => handleUpdateSettings({ ...settings, exportFps: fps })}
+            onChangeSubtitleScale={(scale) => handleUpdateSettings({ ...settings, subtitleScale: scale })}
             onRunPreflight={handleRunPreflight}
             onExportVideo={handleExportVideo}
             onCancelExport={() => exportAbortRef.current?.abort()}
@@ -1011,43 +1210,137 @@ export default function App() {
 
         {activeTab === 'projects' && (
           <ProjectsView
+            workspaceName={activeWorkspace.name}
             projects={savedProjects}
             storage={storageSummary}
             dirName={dirHandle?.name ?? null}
             onOpenProject={handleOpenSavedProject}
             onDeleteProject={async (id) => {
-              await deleteProjectFromDB(id);
+              await deleteWorkspaceProject(id);
               if (projectId === id) setProjectId(null);
-              await refreshProjectsAndStorage();
+              await refreshWorkspaceLists(activeWorkspace.id);
               notify('ลบโปรเจกต์แล้ว');
             }}
             onDeleteVideo={async (id) => {
-              await deleteProjectVideoFromDB(id);
+              await deleteWorkspaceProjectVideo(id);
               if (projectId === id) {
                 setExportResult(null);
                 if (exportVideoUrl) URL.revokeObjectURL(exportVideoUrl);
                 setExportVideoUrl(null);
               }
-              await refreshProjectsAndStorage();
+              await refreshWorkspaceLists(activeWorkspace.id);
               notify('ล้างแคชวิดีโอแล้ว');
+            }}
+            onPickDirectory={handlePickDirectory}
+            onGoStorage={() => setActiveTab('storage')}
+          />
+        )}
+
+        {activeTab === 'storage' && (
+          <LocalStorageView
+            workspaces={workspaces}
+            activeWorkspace={activeWorkspace}
+            isLocked={isLocked}
+            deviceId={deviceId}
+            storage={storageSummary}
+            onSwitchWorkspace={async (id) => {
+              const target = workspaces.find((w) => w.id === id);
+              if (!target) return;
+              stopPlayback();
+              setProject(null);
+              setProjectId(null);
+              await loadWorkspaceData(target, null);
+              notify(`สลับไปยัง Workspace "${target.name}" แล้ว`);
+            }}
+            onCreateWorkspace={async (name) => {
+              const ws = await createWorkspace(name);
+              setWorkspaces(await listWorkspaces());
+              stopPlayback();
+              setProject(null);
+              setProjectId(null);
+              await loadWorkspaceData(ws, null);
+              notify(`สร้าง Workspace "${ws.name}" แล้ว`);
+            }}
+            onRenameWorkspace={async (id, name) => {
+              const updated = await renameWorkspace(id, name);
+              if (updated && updated.id === activeWorkspace.id) {
+                setActiveWorkspace(updated);
+              }
+              setWorkspaces(await listWorkspaces());
+              notify('เปลี่ยนชื่อ Workspace แล้ว');
+            }}
+            onDeleteWorkspace={async (id) => {
+              try {
+                await deleteWorkspace(id);
+                const list = await listWorkspaces();
+                setWorkspaces(list);
+                if (id === activeWorkspace.id) {
+                  await loadWorkspaceData(list[0], null);
+                }
+                notify('ลบ Workspace แล้ว');
+              } catch (err) {
+                notify(err instanceof Error ? err.message : 'ลบไม่สำเร็จ');
+              }
+            }}
+            onSetPinLock={async (passphrase) => {
+              const { workspace, cryptoKey } = await enableWorkspacePassphrase(
+                activeWorkspace.id,
+                passphrase,
+                secrets
+              );
+              setActiveWorkspace(workspace);
+              setUnlockedKey(cryptoKey);
+              setWorkspaces(await listWorkspaces());
+              notify('เปิดใช้รหัสผ่าน AES-GCM สำหรับ Workspace นี้แล้ว');
+            }}
+            onUnlockWithPin={async (passphrase) => {
+              const res = await unlockWorkspace(activeWorkspace, passphrase);
+              if (!res) return false;
+              setUnlockedKey(res.cryptoKey);
+              setSecrets(res.secrets);
+              notify('ปลดล็อก Workspace สำเร็จ');
+              return true;
+            }}
+            onRemovePinLock={async (currentPassphrase) => {
+              if (isLocked) {
+                const res = await unlockWorkspace(activeWorkspace, currentPassphrase);
+                if (!res) return false;
+                const updated = await removeWorkspacePassphrase(activeWorkspace.id, res.secrets);
+                if (updated) setActiveWorkspace(updated);
+                setSecrets(res.secrets);
+              } else {
+                const ok = await unlockWorkspace(activeWorkspace, currentPassphrase);
+                if (!ok) return false;
+                const updated = await removeWorkspacePassphrase(activeWorkspace.id, secrets);
+                if (updated) setActiveWorkspace(updated);
+              }
+              setUnlockedKey(null);
+              setWorkspaces(await listWorkspaces());
+              notify('ถอดรหัสผ่าน Workspace แล้ว');
+              return true;
             }}
             onRequestPersist={async () => {
               const ok = await requestPersistentStorage();
-              await refreshProjectsAndStorage();
+              await refreshWorkspaceLists(activeWorkspace.id);
               notify(ok ? 'เปิดสิทธิ์พื้นที่เก็บข้อมูลถาวรแล้ว' : 'เบราว์เซอร์ไม่อนุญาตหรือยังไม่รองรับ');
             }}
-            onPickDirectory={handlePickDirectory}
-            onBackupJson={async () => {
-              const count = await exportBackupJson();
-              notify(`ส่งออก Backup ${count} โปรเจกต์แล้ว (ไม่รวมไฟล์วิดีโอ)`);
+            onExportWorkspaceBackup={async () => {
+              const { blob, filename, projectCount } = await exportWorkspaceBackupBlob(
+                activeWorkspace.id
+              );
+              triggerDownload(blob, filename);
+              notify(`ส่งออก Backup ${projectCount} โปรเจกต์ของ Workspace นี้แล้ว`);
             }}
-            onRestoreJson={async (file) => {
+            onImportWorkspaceBackup={async (file) => {
               try {
-                const count = await restoreBackupJson(file);
-                await refreshProjectsAndStorage();
-                notify(`กู้คืน ${count} โปรเจกต์เรียบร้อย`);
+                const { importedProjects, importedAudio } = await importWorkspaceBackupFile(
+                  activeWorkspace.id,
+                  file
+                );
+                await loadWorkspaceData(activeWorkspace, unlockedKey);
+                notify(`นำเข้า ${importedProjects} โปรเจกต์ และ ${importedAudio} เสียงพากย์สำเร็จ`);
               } catch (err) {
-                notify(err instanceof Error ? err.message : 'ไฟล์ Backup ไม่ถูกต้อง');
+                notify(err instanceof Error ? err.message : 'นำเข้า Backup ไม่สำเร็จ');
               }
             }}
           />
@@ -1055,10 +1348,23 @@ export default function App() {
 
         {activeTab === 'settings' && (
           <SettingsView
+            key={`${activeWorkspace.id}-${isLocked ? 'locked' : 'open'}`}
+            workspaceName={activeWorkspace.name}
+            hasPinLock={activeWorkspace.hasPassphrase}
+            isLocked={isLocked}
             settings={settings}
+            secrets={secrets}
             onUpdateSettings={handleUpdateSettings}
-            aiHealth={aiHealth}
-            onCheckHealth={checkHealth}
+            onSaveSecrets={async (nextSecrets) => {
+              const updated = await saveWorkspaceSecrets(
+                activeWorkspace.id,
+                nextSecrets,
+                unlockedKey
+              );
+              setSecrets(nextSecrets);
+              if (updated) setActiveWorkspace(updated);
+            }}
+            onGoStorage={() => setActiveTab('storage')}
             onNotify={notify}
           />
         )}
@@ -1068,7 +1374,7 @@ export default function App() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-20 md:bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-white/15 bg-[#1b1d29]/95 px-4 py-2.5 text-sm font-medium text-white shadow-2xl backdrop-blur-md"
+          className="fixed bottom-16 md:bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-white/15 bg-[#1b1d29] px-4 py-2.5 text-sm font-medium text-white shadow-2xl"
         >
           {toastMsg}
         </div>
