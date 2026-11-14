@@ -101,6 +101,7 @@ export interface TtsSynthesisRequest {
   dictionary?: PronunciationEntry[];
   settings: StudioSettings;
   secrets: WorkspaceSecrets;
+  signal?: AbortSignal;
 }
 
 export interface TtsSynthesisResponse {
@@ -242,6 +243,7 @@ export const OpenRouterTtsAdapter: TtsProviderAdapter = {
 
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
+      signal: req.signal,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${key}`,
@@ -330,6 +332,7 @@ export const ElevenLabsAdapter: TtsProviderAdapter = {
       `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(req.voiceId)}/with-timestamps`,
       {
         method: 'POST',
+        signal: req.signal,
         headers: {
           'Content-Type': 'application/json',
           'xi-api-key': key,
@@ -438,6 +441,7 @@ export const AzureSpeechAdapter: TtsProviderAdapter = {
 
     const resp = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
       method: 'POST',
+      signal: req.signal,
       headers: {
         'Ocp-Apim-Subscription-Key': key,
         'Content-Type': 'application/ssml+xml',
@@ -489,6 +493,7 @@ export const GoogleCloudTtsAdapter: TtsProviderAdapter = {
       `https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(key)}`,
       {
         method: 'POST',
+        signal: req.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           input: { text: preparedText },
@@ -559,6 +564,7 @@ export const OpenAiTtsAdapter: TtsProviderAdapter = {
 
     const resp = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
+      signal: req.signal,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${key}`,
@@ -629,6 +635,7 @@ export const CustomHttpTtsAdapter: TtsProviderAdapter = {
     try {
       resp = await fetch(endpoint, {
         method: 'POST',
+        signal: req.signal,
         headers,
         body: JSON.stringify(payloadObj),
       });

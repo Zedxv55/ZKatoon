@@ -630,6 +630,8 @@ export interface MergedSceneAudioResult {
   speechStartSec: number;
   speechEndSec: number;
   sceneDurations: number[];
+  decodedSceneCount: number;
+  failedScenes: Array<{ sceneId: string; reason: string }>;
 }
 
 function encodeAudioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
@@ -674,6 +676,7 @@ function encodeAudioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
 
 /**
  * Combines individual SceneAudioRecords into a single master Voice AudioBuffer aligned with timeline segments.
+ * Tracks exact per-scene decode failures so callers never falsely report success.
  */
 export async function mergeSceneAudioRecordsToBuffer(
   ctx: AudioContext,
@@ -684,12 +687,22 @@ export async function mergeSceneAudioRecordsToBuffer(
   const sampleRate = ctx.sampleRate || 44100;
   const decodedPerScene: Array<AudioBuffer | null> = [];
   const sceneDurations: number[] = [];
+  const failedScenes: Array<{ sceneId: string; reason: string }> = [];
+  let decodedSceneCount = 0;
 
-  for (const sc of scenes) {
-    const rec = sc.id ? sceneAudioMap[sc.id] : undefined;
+  for (let i = 0; i < scenes.length; i++) {
+    const sc = scenes[i];
+    const sid = sc.id || `S${i + 1}`;
+    const rec = sceneAudioMap[sid];
     if (!rec) {
       decodedPerScene.push(null);
       sceneDurations.push(sc.manualDurationSec || Math.max(1.8, sc.narration.length / 11));
+      continue;
+    }
+    if (!rec.audioBlob || rec.audioBlob.size === 0) {
+      decodedPerScene.push(null);
+      sceneDurations.push(rec.durationSec || 2.5);
+      failedScenes.push({ sceneId: sid, reason: 'ไฟล์เสียงพากย์มีขนาด 0 ไบต์' });
       continue;
     }
     try {
@@ -697,14 +710,18 @@ export async function mergeSceneAudioRecordsToBuffer(
       const buf = await ctx.decodeAudioData(ab.slice(0));
       decodedPerScene.push(buf);
       sceneDurations.push(buf.duration);
-    } catch {
+      decodedSceneCount++;
+    } catch (err) {
       decodedPerScene.push(null);
       sceneDurations.push(rec.durationSec || 2.5);
+      failedScenes.push({
+        sceneId: sid,
+        reason: err instanceof Error && err.message ? err.message : 'เบราว์เซอร์ไม่สามารถถอดรหัสไฟล์เสียงนี้ได้',
+      });
     }
   }
 
-  const hasAny = decodedPerScene.some(Boolean);
-  if (!hasAny) {
+  if (decodedSceneCount === 0) {
     return {
       voiceBuffer: null,
       rawWav: null,
@@ -713,6 +730,8 @@ export async function mergeSceneAudioRecordsToBuffer(
       speechStartSec: 0,
       speechEndSec: 0,
       sceneDurations,
+      decodedSceneCount: 0,
+      failedScenes,
     };
   }
 
@@ -752,6 +771,9 @@ export async function mergeSceneAudioRecordsToBuffer(
     speechStartSec: 0,
     speechEndSec: totalSpeechSec,
     sceneDurations,
+    decodedSceneCount,
+    failedScenes,
   };
 }
+
 

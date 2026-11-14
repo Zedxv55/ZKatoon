@@ -1,0 +1,19 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/workspaces/{workspaceId}/{allAssetPaths=**} {
+      allow read, delete: if request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.uid == userId;
+      allow create, update: if request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.uid == userId
+        && request.resource.size <= 50 * 1024 * 1024;
+    }
+  }
+}

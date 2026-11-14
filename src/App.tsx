@@ -10,9 +10,11 @@ import { TopBar, type AppTab } from './components/TopBar';
 import { VoiceStudioView } from './components/VoiceStudioView';
 import { ThreeSceneStage } from './engine3d/ThreeSceneStage';
 import type {
+  AuthUserProfile,
   CartoonProject,
   ExportFps,
   HardwareCapabilities,
+  MergeAudioOutcome,
   PauseCandidate,
   PerformancePreset,
   PronunciationEntry,
@@ -24,6 +26,18 @@ import type {
   WorkspaceMeta,
   WorkspaceSecrets,
 } from './types/cartoon';
+import {
+  assertMatchingAccountUid,
+  resolveAccountScopeKey,
+  runSafeAccountSwitchSequence,
+} from './utils/accountLifecycle';
+import {
+  getCurrentFirebaseUid,
+  signInWithGooglePopup,
+  signOutFirebase,
+  subscribeFirebaseAuth,
+  testFirestoreServerConnection,
+} from './utils/firebaseClient';
 import { generateDirectorPlan } from './utils/aiDirector';
 import {
   buildAudioGraph,
@@ -114,7 +128,13 @@ export default function App() {
     return 'create';
   });
 
-  // Multi-Workspace Local-First State
+  // Auth & Multi-Workspace Local-First State (keyed strictly by Firebase UID or 'guest')
+  const [authProfile, setAuthProfile] = useState<AuthUserProfile | null>(null);
+  const [isAuthBusy, setIsAuthBusy] = useState(false);
+  const [idbError, setIdbError] = useState<string | null>(null);
+  const accountScopeRef = useRef<string>('guest');
+  const initialBootRef = useRef<boolean>(false);
+
   const [deviceId, setDeviceId] = useState<string>('local');
   const [workspaces, setWorkspaces] = useState<WorkspaceMeta[]>([INITIAL_WORKSPACE]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceMeta>(INITIAL_WORKSPACE);
@@ -203,6 +223,14 @@ export default function App() {
   const playStartCtxTimeRef = useRef(0);
   const exportAbortRef = useRef<AbortController | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const ttsStopHandlersRef = useRef<Set<() => void>>(new Set());
+
+  const registerTtsStopHandler = useCallback((fn: () => void) => {
+    ttsStopHandlersRef.current.add(fn);
+    return () => {
+      ttsStopHandlersRef.current.delete(fn);
+    };
+  }, []);
 
   // Live refs for reactive rendering inside ThreeSceneStage playback loops
   const projectRef = useRef(project);
@@ -234,10 +262,10 @@ export default function App() {
     return audioCtxRef.current;
   }, []);
 
-  // Load workspace data helper
+  // Load workspace data helper (strictly guards IndexedDB read errors)
   const loadWorkspaceData = useCallback(async (ws: WorkspaceMeta, keyForLocked: CryptoKey | null = null) => {
     setActiveWorkspace(ws);
-    setActiveWorkspaceId(ws.id);
+    setActiveWorkspaceId(ws.id, resolveAccountScopeKey(ws.ownerUid));
     setUnlockedKey(keyForLocked);
     setSecrets(ws.hasPassphrase ? {} : ws.plainSecrets || {});
 
@@ -256,38 +284,154 @@ export default function App() {
     setStorageSummary(sum);
   }, []);
 
-  // Bootstrap workspace & hardware capabilities on mount
+  const loadAccountWorkspaces = useCallback(
+    async (scopeKey: string, hwOverride?: HardwareCapabilities | null) => {
+      try {
+        setIdbError(null);
+        const [activeWs, allWs] = await Promise.all([
+          getActiveWorkspace(scopeKey),
+          listWorkspaces(scopeKey),
+        ]);
+        // Confirm account has not changed mid-flight
+        if (accountScopeRef.current !== scopeKey) return;
+        setWorkspaces(allWs);
+        await loadWorkspaceData(activeWs, null);
+
+        const hw = hwOverride ?? capabilities;
+        if (hw?.isSoftwareGl) {
+          const wsSet = loadWorkspaceSettings(activeWs.id);
+          if (wsSet.previewQuality !== 'low') {
+            const next = { ...wsSet, previewQuality: 'low' as PerformancePreset };
+            saveWorkspaceSettings(activeWs.id, next);
+            setSettings(next);
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'ไม่สามารถอ่านฐานข้อมูล IndexedDB ในเครื่องได้';
+        setIdbError(`IndexedDB Error: ${msg} — ระบบหยุดการสร้าง Workspace ว่างอัตโนมัติเพื่อปกป้องข้อมูลเดิมของคุณ`);
+      }
+    },
+    [capabilities, loadWorkspaceData]
+  );
+
+  // Stop any active TTS HTTP requests and playing preview audio safely
+  const stopTtsPreviews = useCallback(() => {
+    ttsStopHandlersRef.current.forEach((fn) => {
+      try {
+        fn();
+      } catch {
+        // ignore
+      }
+    });
+    if (typeof document !== 'undefined') {
+      document.querySelectorAll('audio').forEach((el) => {
+        try {
+          el.pause();
+        } catch {
+          // ignore
+        }
+      });
+    }
+  }, []);
+
+  // Safe clear of previous user React state on account switch
+  const clearUserReactState = useCallback(() => {
+    setDraftPlanProject(null);
+    setProject(null);
+    setProjectId(null);
+    setSceneAudioMap({});
+    setAudioRaw(null);
+    setAudioBuffer(null);
+    setEnvelope([]);
+    setPauseCandidates([]);
+    setSpeechBounds({ ss: 0 });
+    setAudioNote('');
+    setSecrets({});
+    setUnlockedKey(null);
+    setVoicePresets([]);
+    setSavedProjects([]);
+    setExportResult(null);
+    setExportError(null);
+    setExportProgressText('');
+    setExportProgressPct(0);
+    setCurrentTime(0);
+  }, []);
+
+  // Bootstrap hardware capabilities, Firestore ping, and Auth state listener
   useEffect(() => {
     let mounted = true;
-    (async () => {
-      const devId = getOrCreateLocalDeviceId();
-      if (mounted) setDeviceId(devId);
+    const devId = getOrCreateLocalDeviceId();
+    setDeviceId(devId);
 
-      const activeWs = await getActiveWorkspace();
-      const [allWs, hw] = await Promise.all([
-        listWorkspaces(),
-        probeHardwareCapabilities(),
-      ]);
+    void testFirestoreServerConnection();
+
+    const hwPromise = probeHardwareCapabilities().then((hw) => {
+      if (mounted) setCapabilities(hw);
+      return hw;
+    });
+
+    const unsub = subscribeFirebaseAuth(async (profile) => {
       if (!mounted) return;
-      setWorkspaces(allWs);
-      setCapabilities(hw);
-      await loadWorkspaceData(activeWs, null);
+      const nextScope = resolveAccountScopeKey(profile?.uid);
+      const prevScope = accountScopeRef.current;
+      const isFirstBoot = !initialBootRef.current;
+      initialBootRef.current = true;
 
-      // Apply recommended low quality default automatically if running on software WebGL
-      if (hw.isSoftwareGl) {
-        const wsSet = loadWorkspaceSettings(activeWs.id);
-        if (wsSet.previewQuality !== 'low') {
-          const next = { ...wsSet, previewQuality: 'low' as PerformancePreset };
-          saveWorkspaceSettings(activeWs.id, next);
-          if (mounted) setSettings(next);
-        }
+      setAuthProfile(profile);
+
+      if (isFirstBoot && prevScope === nextScope) {
+        accountScopeRef.current = nextScope;
+        const hw = await hwPromise;
+        if (!mounted) return;
+        await loadAccountWorkspaces(nextScope, hw);
+        return;
       }
-    })();
+
+      if (prevScope !== nextScope) {
+        accountScopeRef.current = nextScope;
+        await runSafeAccountSwitchSequence(nextScope, {
+          stopPlayback: () => {
+            setIsPlaying(false);
+            if (rafRef.current !== null) {
+              cancelAnimationFrame(rafRef.current);
+              rafRef.current = null;
+            }
+            playbackStop3dRef.current?.();
+            playbackStop3dRef.current = null;
+            try {
+              audioGraphRef.current?.stop();
+            } catch {
+              // ignore
+            }
+            audioGraphRef.current = null;
+          },
+          stopTts: stopTtsPreviews,
+          abortExport: async () => {
+            if (exportAbortRef.current) {
+              exportAbortRef.current.abort();
+              await new Promise((r) => setTimeout(r, 80));
+            }
+          },
+          clearUserReactState: () => {
+            if (exportVideoUrl) URL.revokeObjectURL(exportVideoUrl);
+            setExportVideoUrl(null);
+            clearUserReactState();
+          },
+          loadAccountData: async (targetScope) => {
+            const hw = await hwPromise;
+            if (!mounted) return;
+            await loadAccountWorkspaces(targetScope, hw);
+          },
+        });
+      }
+    });
 
     return () => {
       mounted = false;
+      unsub();
     };
-  }, [loadWorkspaceData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Reload per-scene audio whenever projectId or activeWorkspace changes
   useEffect(() => {
@@ -588,8 +732,9 @@ export default function App() {
   }, [stopPlayback]);
 
   const refreshWorkspaceLists = useCallback(async (wsId = activeWorkspace.id) => {
+    const scope = accountScopeRef.current;
     const [allWs, projs, sum] = await Promise.all([
-      listWorkspaces(),
+      listWorkspaces(scope),
       listWorkspaceProjects(wsId),
       getStorageSummary(),
     ]);
@@ -653,6 +798,9 @@ export default function App() {
         thumb = null;
       }
 
+      const expectedScope = accountScopeRef.current;
+      assertMatchingAccountUid(expectedScope, getCurrentFirebaseUid(), 'บันทึกโปรเจกต์');
+
       const projWithId = { ...proj, id };
       await saveWorkspaceProject(activeWorkspace.id, {
         id,
@@ -665,6 +813,7 @@ export default function App() {
         thumb,
         at: Date.now(),
       });
+      assertMatchingAccountUid(expectedScope, getCurrentFirebaseUid(), 'อัปเดตสถานะโปรเจกต์');
       setProject(projWithId);
       setProjectId(id);
       await refreshWorkspaceLists(activeWorkspace.id);
@@ -876,17 +1025,40 @@ export default function App() {
     }
   }
 
-  // Merge per-scene audio blobs into master timeline AudioBuffer & envelope
-  async function handleMergeAllAudioToStudio() {
-    if (!project) return;
+  // Merge per-scene audio blobs into master timeline AudioBuffer & envelope (reads authoritative records, reports real failures)
+  async function handleMergeAllAudioToStudio(
+    overrideSceneMap?: Record<string, SceneAudioRecord>
+  ): Promise<MergeAudioOutcome> {
+    if (!project) {
+      return { ok: false, mergedCount: 0, failedScenes: [], error: 'ยังไม่ได้เปิดโปรเจกต์' };
+    }
     stopPlayback();
     try {
+      const projId = projectId || project.id || 'active-project';
+      const persistedMap = await listProjectSceneAudio(activeWorkspace.id, projId).catch(() => ({}));
+      const latestMap: Record<string, SceneAudioRecord> = {
+        ...persistedMap,
+        ...sceneAudioMapRef.current,
+        ...(overrideSceneMap || {}),
+      };
+      setSceneAudioMap(latestMap);
+
       const ctx = getAudioCtx();
-      const merged = await mergeSceneAudioRecordsToBuffer(ctx, project.scenes, sceneAudioMap);
+      const merged = await mergeSceneAudioRecordsToBuffer(ctx, project.scenes, latestMap);
       if (!merged.voiceBuffer || !merged.rawWav) {
-        notify('ยังไม่มีไฟล์เสียงพากย์รายฉากในโปรเจกต์นี้');
-        return;
+        const errText =
+          merged.failedScenes.length > 0
+            ? `ถอดรหัสไฟล์เสียงล้มเหลว (${merged.failedScenes.map((f) => `${f.sceneId}: ${f.reason}`).join(', ')})`
+            : 'ยังไม่มีไฟล์เสียงพากย์รายฉากที่สมบูรณ์ในโปรเจกต์นี้';
+        notify(errText);
+        return {
+          ok: false,
+          mergedCount: 0,
+          failedScenes: merged.failedScenes,
+          error: errText,
+        };
       }
+
       const nextProj: CartoonProject = {
         ...project,
         sceneDurations: merged.sceneDurations,
@@ -898,14 +1070,42 @@ export default function App() {
       setEnvelope(merged.envelope);
       setPauseCandidates(merged.pauseCandidates);
       setSpeechBounds({ ss: merged.speechStartSec, se: merged.speechEndSec });
+
+      if (merged.failedScenes.length > 0) {
+        const failList = merged.failedScenes.map((f) => f.sceneId).join(', ');
+        const partialMsg = `รวมเสียงได้ ${merged.decodedSceneCount} ฉาก แต่ฉาก ${failList} ถอดรหัสล้มเหลว กรุณากดลองใหม่`;
+        setAudioNote(partialMsg);
+        notify(partialMsg);
+        await persistProject(nextProj, merged.rawWav, 'wav', exportResult?.blob ?? null, projectId, true);
+        return {
+          ok: false,
+          mergedCount: merged.decodedSceneCount,
+          failedScenes: merged.failedScenes,
+          error: partialMsg,
+        };
+      }
+
       setAudioNote(
-        `รวมเสียงพากย์ ${Object.keys(sceneAudioMap).length} ฉากเข้า Timeline แล้ว (${merged.voiceBuffer.duration.toFixed(1)}s)`
+        `รวมเสียงพากย์ ${merged.decodedSceneCount} ฉากเข้า Timeline แล้ว (${merged.voiceBuffer.duration.toFixed(1)}s)`
       );
       await persistProject(nextProj, merged.rawWav, 'wav', exportResult?.blob ?? null, projectId, true);
       setActiveTab('studio');
-      notify('รวมเสียงทุกฉากเข้า Timeline และซิงก์ Lip-Sync แล้ว');
+      notify(`รวมเสียง ${merged.decodedSceneCount} ฉากเข้า Timeline และซิงก์ Lip-Sync แล้ว`);
+      return {
+        ok: true,
+        mergedCount: merged.decodedSceneCount,
+        failedScenes: [],
+      };
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'รวมเสียงไม่สำเร็จ');
+      const msg = err instanceof Error ? err.message : 'รวมเสียงเข้า Timeline ไม่สำเร็จ';
+      setAudioNote(`รวมเสียงล้มเหลว: ${msg}`);
+      notify(msg);
+      return {
+        ok: false,
+        mergedCount: 0,
+        failedScenes: [],
+        error: msg,
+      };
     }
   }
 
@@ -1056,6 +1256,44 @@ export default function App() {
     [activeWorkspace.id]
   );
 
+  const handleSignInGoogle = useCallback(async () => {
+    setIsAuthBusy(true);
+    try {
+      const profile = await signInWithGooglePopup(false);
+      notify(`เข้าสู่ระบบสำเร็จ (${profile.displayName} · UID ${profile.uid.slice(0, 6)}…)`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'เข้าสู่ระบบ Google ไม่สำเร็จ';
+      notify(msg);
+    } finally {
+      setIsAuthBusy(false);
+    }
+  }, [notify]);
+
+  const handleSwitchAccount = useCallback(async () => {
+    setIsAuthBusy(true);
+    try {
+      const profile = await signInWithGooglePopup(true);
+      notify(`สลับบัญชีเป็น ${profile.displayName} (UID ${profile.uid.slice(0, 6)}…)`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'เปลี่ยนบัญชีไม่สำเร็จ';
+      notify(msg);
+    } finally {
+      setIsAuthBusy(false);
+    }
+  }, [notify]);
+
+  const handleSignOut = useCallback(async () => {
+    setIsAuthBusy(true);
+    try {
+      await signOutFirebase();
+      notify('ออกจากระบบแล้ว — ใช้งานต่อในโหมด Guest ในเครื่อง');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'ออกจากระบบไม่สำเร็จ');
+    } finally {
+      setIsAuthBusy(false);
+    }
+  }, [notify]);
+
   return (
     <div className="min-h-screen bg-[#0a0b10] text-[#f3f2fa] pb-16 md:pb-8">
       <TopBar
@@ -1070,8 +1308,24 @@ export default function App() {
         hasProject={Boolean(project)}
         workspaceName={activeWorkspace.name}
         isLocked={isLocked}
+        authProfile={authProfile}
+        isAuthBusy={isAuthBusy}
+        onSignInGoogle={handleSignInGoogle}
+        onSwitchAccount={handleSwitchAccount}
+        onSignOut={handleSignOut}
         onOpenDemo3D={handleOpenDemo3D}
       />
+
+      {idbError && (
+        <div
+          role="alert"
+          className="mx-auto max-w-[1440px] px-4 pt-3 sm:px-6"
+        >
+          <div className="rounded-xl border border-rose-500/40 bg-rose-500/15 px-4 py-3 text-xs text-rose-100">
+            <strong>เกิดข้อผิดพลาดในการอ่านฐานข้อมูลในเครื่อง:</strong> {idbError}
+          </div>
+        </div>
+      )}
 
       <main>
         {activeTab === 'create' && (
@@ -1103,6 +1357,7 @@ export default function App() {
 
         {activeTab === 'characters' && (
           <CharactersView
+            key={`${activeWorkspace.id}:${authProfile?.uid || 'guest'}`}
             workspaceId={activeWorkspace.id}
             project={project}
             onUpdateProject={setProject}
@@ -1113,6 +1368,7 @@ export default function App() {
 
         {activeTab === 'voice' && (
           <VoiceStudioView
+            key={`${activeWorkspace.id}:${authProfile?.uid || 'guest'}`}
             workspaceId={activeWorkspace.id}
             project={project}
             settings={settings}
@@ -1123,18 +1379,22 @@ export default function App() {
             onUpdateSettings={handleUpdateSettings}
             onUpdateProject={setProject}
             onSaveVoicePreset={async (preset) => {
+              assertMatchingAccountUid(accountScopeRef.current, getCurrentFirebaseUid(), 'บันทึก Voice Preset');
               await saveVoicePreset(activeWorkspace.id, preset);
               setVoicePresets(await listVoicePresets(activeWorkspace.id));
             }}
             onDeleteVoicePreset={async (id) => {
+              assertMatchingAccountUid(accountScopeRef.current, getCurrentFirebaseUid(), 'ลบ Voice Preset');
               await deleteVoicePreset(id);
               setVoicePresets(await listVoicePresets(activeWorkspace.id));
             }}
             onSaveDictionary={async (entries) => {
+              assertMatchingAccountUid(accountScopeRef.current, getCurrentFirebaseUid(), 'บันทึกพจนานุกรม');
               await savePronunciationDict(activeWorkspace.id, entries);
               setDictionary(entries);
             }}
             onSaveSceneAudio={async (rec) => {
+              assertMatchingAccountUid(accountScopeRef.current, getCurrentFirebaseUid(), 'บันทึกเสียงพากย์');
               await saveSceneAudioRecord(rec);
               setSceneAudioMap((prev) => ({ ...prev, [rec.sceneId]: rec }));
             }}
@@ -1142,6 +1402,7 @@ export default function App() {
             onOpenDemo3D={handleOpenDemo3D}
             onGoSettings={() => setActiveTab('settings')}
             onNotify={notify}
+            onRegisterTtsStop={registerTtsStopHandler}
           />
         )}
 
@@ -1210,18 +1471,21 @@ export default function App() {
 
         {activeTab === 'projects' && (
           <ProjectsView
+            key={`${activeWorkspace.id}:${authProfile?.uid || 'guest'}`}
             workspaceName={activeWorkspace.name}
             projects={savedProjects}
             storage={storageSummary}
             dirName={dirHandle?.name ?? null}
             onOpenProject={handleOpenSavedProject}
             onDeleteProject={async (id) => {
+              assertMatchingAccountUid(accountScopeRef.current, getCurrentFirebaseUid(), 'ลบโปรเจกต์');
               await deleteWorkspaceProject(id);
               if (projectId === id) setProjectId(null);
               await refreshWorkspaceLists(activeWorkspace.id);
               notify('ลบโปรเจกต์แล้ว');
             }}
             onDeleteVideo={async (id) => {
+              assertMatchingAccountUid(accountScopeRef.current, getCurrentFirebaseUid(), 'ล้างแคชวิดีโอ');
               await deleteWorkspaceProjectVideo(id);
               if (projectId === id) {
                 setExportResult(null);
@@ -1238,6 +1502,7 @@ export default function App() {
 
         {activeTab === 'storage' && (
           <LocalStorageView
+            key={`${activeWorkspace.id}:${authProfile?.uid || 'guest'}`}
             workspaces={workspaces}
             activeWorkspace={activeWorkspace}
             isLocked={isLocked}
@@ -1253,8 +1518,10 @@ export default function App() {
               notify(`สลับไปยัง Workspace "${target.name}" แล้ว`);
             }}
             onCreateWorkspace={async (name) => {
-              const ws = await createWorkspace(name);
-              setWorkspaces(await listWorkspaces());
+              const scope = accountScopeRef.current;
+              assertMatchingAccountUid(scope, getCurrentFirebaseUid(), 'สร้าง Workspace');
+              const ws = await createWorkspace(name, undefined, scope);
+              setWorkspaces(await listWorkspaces(scope));
               stopPlayback();
               setProject(null);
               setProjectId(null);
@@ -1262,17 +1529,21 @@ export default function App() {
               notify(`สร้าง Workspace "${ws.name}" แล้ว`);
             }}
             onRenameWorkspace={async (id, name) => {
+              const scope = accountScopeRef.current;
+              assertMatchingAccountUid(scope, getCurrentFirebaseUid(), 'เปลี่ยนชื่อ Workspace');
               const updated = await renameWorkspace(id, name);
               if (updated && updated.id === activeWorkspace.id) {
                 setActiveWorkspace(updated);
               }
-              setWorkspaces(await listWorkspaces());
+              setWorkspaces(await listWorkspaces(scope));
               notify('เปลี่ยนชื่อ Workspace แล้ว');
             }}
             onDeleteWorkspace={async (id) => {
               try {
-                await deleteWorkspace(id);
-                const list = await listWorkspaces();
+                const scope = accountScopeRef.current;
+                assertMatchingAccountUid(scope, getCurrentFirebaseUid(), 'ลบ Workspace');
+                await deleteWorkspace(id, scope);
+                const list = await listWorkspaces(scope);
                 setWorkspaces(list);
                 if (id === activeWorkspace.id) {
                   await loadWorkspaceData(list[0], null);
@@ -1283,6 +1554,8 @@ export default function App() {
               }
             }}
             onSetPinLock={async (passphrase) => {
+              const scope = accountScopeRef.current;
+              assertMatchingAccountUid(scope, getCurrentFirebaseUid(), 'ตั้งรหัสผ่าน Workspace');
               const { workspace, cryptoKey } = await enableWorkspacePassphrase(
                 activeWorkspace.id,
                 passphrase,
@@ -1290,7 +1563,7 @@ export default function App() {
               );
               setActiveWorkspace(workspace);
               setUnlockedKey(cryptoKey);
-              setWorkspaces(await listWorkspaces());
+              setWorkspaces(await listWorkspaces(scope));
               notify('เปิดใช้รหัสผ่าน AES-GCM สำหรับ Workspace นี้แล้ว');
             }}
             onUnlockWithPin={async (passphrase) => {
@@ -1302,6 +1575,8 @@ export default function App() {
               return true;
             }}
             onRemovePinLock={async (currentPassphrase) => {
+              const scope = accountScopeRef.current;
+              assertMatchingAccountUid(scope, getCurrentFirebaseUid(), 'ถอดรหัสผ่าน Workspace');
               if (isLocked) {
                 const res = await unlockWorkspace(activeWorkspace, currentPassphrase);
                 if (!res) return false;
@@ -1315,7 +1590,7 @@ export default function App() {
                 if (updated) setActiveWorkspace(updated);
               }
               setUnlockedKey(null);
-              setWorkspaces(await listWorkspaces());
+              setWorkspaces(await listWorkspaces(scope));
               notify('ถอดรหัสผ่าน Workspace แล้ว');
               return true;
             }}
@@ -1333,6 +1608,7 @@ export default function App() {
             }}
             onImportWorkspaceBackup={async (file) => {
               try {
+                assertMatchingAccountUid(accountScopeRef.current, getCurrentFirebaseUid(), 'นำเข้า Backup');
                 const { importedProjects, importedAudio } = await importWorkspaceBackupFile(
                   activeWorkspace.id,
                   file
@@ -1348,7 +1624,7 @@ export default function App() {
 
         {activeTab === 'settings' && (
           <SettingsView
-            key={`${activeWorkspace.id}-${isLocked ? 'locked' : 'open'}`}
+            key={`${activeWorkspace.id}:${authProfile?.uid || 'guest'}:${isLocked ? 'locked' : 'open'}`}
             workspaceName={activeWorkspace.name}
             hasPinLock={activeWorkspace.hasPassphrase}
             isLocked={isLocked}
@@ -1356,6 +1632,7 @@ export default function App() {
             secrets={secrets}
             onUpdateSettings={handleUpdateSettings}
             onSaveSecrets={async (nextSecrets) => {
+              assertMatchingAccountUid(accountScopeRef.current, getCurrentFirebaseUid(), 'บันทึก API Key');
               const updated = await saveWorkspaceSecrets(
                 activeWorkspace.id,
                 nextSecrets,

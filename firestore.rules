@@ -1,0 +1,511 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function workspaceExistsOwned(userId, workspaceId) {
+      return exists(/databases/$(database)/documents/users/$(userId)/workspaces/$(workspaceId)) &&
+        get(/databases/$(database)/documents/users/$(userId)/workspaces/$(workspaceId)).data.ownerUid == request.auth.uid;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'ownerUid', 'migrationVersion', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'ownerUid', 'migrationVersion', 'migratedFromGuestAt', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == userId &&
+        data.ownerUid == request.auth.uid &&
+        data.migrationVersion is int &&
+        data.migrationVersion >= 0 &&
+        (!data.keys().hasAny(['migratedFromGuestAt']) || (data.migratedFromGuestAt is number && data.migratedFromGuestAt >= 0)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidWorkspace(data, workspaceId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'name',
+          'deviceId',
+          'hasPassphrase',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'name',
+          'deviceId',
+          'hasPassphrase',
+          'saltB64',
+          'keyCheckCipherB64',
+          'keyCheckIvB64',
+          'encryptedSecretsCipherB64',
+          'secretsIvB64',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == workspaceId &&
+        data.ownerUid == request.auth.uid &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+        data.deviceId is string && data.deviceId.size() >= 1 && data.deviceId.size() <= 128 &&
+        data.hasPassphrase is bool &&
+        (!data.keys().hasAny(['saltB64']) || (data.saltB64 is string && data.saltB64.size() <= 256)) &&
+        (!data.keys().hasAny(['keyCheckCipherB64']) || (data.keyCheckCipherB64 is string && data.keyCheckCipherB64.size() <= 512)) &&
+        (!data.keys().hasAny(['keyCheckIvB64']) || (data.keyCheckIvB64 is string && data.keyCheckIvB64.size() <= 256)) &&
+        (!data.keys().hasAny(['encryptedSecretsCipherB64']) || (data.encryptedSecretsCipherB64 is string && data.encryptedSecretsCipherB64.size() <= 16384)) &&
+        (!data.keys().hasAny(['secretsIvB64']) || (data.secretsIvB64 is string && data.secretsIvB64.size() <= 256)) &&
+        data.clientUpdatedAt is number &&
+        data.syncVersion is int && data.syncVersion >= 1 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProject(data, projectId, workspaceId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'workspaceId',
+          'title',
+          'ext',
+          'hasAudioAsset',
+          'hasVideoAsset',
+          'projectData',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'workspaceId',
+          'title',
+          'ext',
+          'hasAudioAsset',
+          'hasVideoAsset',
+          'thumbDataUrl',
+          'projectData',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == projectId &&
+        data.ownerUid == request.auth.uid &&
+        isValidId(data.workspaceId) &&
+        data.workspaceId == workspaceId &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 240 &&
+        data.ext is string && data.ext.size() >= 1 && data.ext.size() <= 16 &&
+        data.hasAudioAsset is bool &&
+        data.hasVideoAsset is bool &&
+        (!data.keys().hasAny(['thumbDataUrl']) || (data.thumbDataUrl is string && data.thumbDataUrl.size() <= 65536)) &&
+        data.projectData is map &&
+        data.clientUpdatedAt is number &&
+        data.syncVersion is int && data.syncVersion >= 1 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidVoicePreset(data, presetId, workspaceId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'workspaceId',
+          'name',
+          'providerId',
+          'voiceId',
+          'voiceName',
+          'presetData',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'workspaceId',
+          'name',
+          'providerId',
+          'voiceId',
+          'voiceName',
+          'presetData',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == presetId &&
+        data.ownerUid == request.auth.uid &&
+        data.workspaceId == workspaceId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+        data.providerId is string && data.providerId.size() >= 1 && data.providerId.size() <= 64 &&
+        data.voiceId is string && data.voiceId.size() <= 200 &&
+        data.voiceName is string && data.voiceName.size() <= 200 &&
+        data.presetData is map &&
+        data.clientUpdatedAt is number &&
+        data.syncVersion is int && data.syncVersion >= 1 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPronunciationDict(data, dictId, workspaceId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'workspaceId',
+          'entries',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'workspaceId',
+          'entries',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == dictId &&
+        data.ownerUid == request.auth.uid &&
+        data.workspaceId == workspaceId &&
+        data.entries is list &&
+        data.entries.size() <= 500 &&
+        (data.entries.size() == 0 || data.entries[0] is map) &&
+        data.clientUpdatedAt is number &&
+        data.syncVersion is int && data.syncVersion >= 1 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSettings(data, settingId, workspaceId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'workspaceId',
+          'settingsData',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'workspaceId',
+          'settingsData',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == settingId &&
+        data.ownerUid == request.auth.uid &&
+        data.workspaceId == workspaceId &&
+        data.settingsData is map &&
+        data.clientUpdatedAt is number &&
+        data.syncVersion is int && data.syncVersion >= 1 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAssetManifest(data, assetId, workspaceId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'workspaceId',
+          'projectId',
+          'kind',
+          'storagePath',
+          'mimeType',
+          'byteLength',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'workspaceId',
+          'projectId',
+          'kind',
+          'storagePath',
+          'mimeType',
+          'byteLength',
+          'sceneId',
+          'durationSec',
+          'metadata',
+          'clientUpdatedAt',
+          'syncVersion',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == assetId &&
+        data.ownerUid == request.auth.uid &&
+        data.workspaceId == workspaceId &&
+        isValidId(data.projectId) &&
+        data.kind in ['scene_audio', 'master_audio', 'glb_model'] &&
+        data.storagePath is string && data.storagePath.size() >= 1 && data.storagePath.size() <= 512 &&
+        data.mimeType is string && data.mimeType.size() >= 1 && data.mimeType.size() <= 128 &&
+        data.byteLength is int && data.byteLength >= 0 && data.byteLength <= 104857600 &&
+        (!data.keys().hasAny(['sceneId']) || (data.sceneId is string && data.sceneId.size() <= 128)) &&
+        (!data.keys().hasAny(['durationSec']) || (data.durationSec is number && data.durationSec >= 0)) &&
+        (!data.keys().hasAny(['metadata']) || data.metadata is map) &&
+        data.clientUpdatedAt is number &&
+        data.syncVersion is int && data.syncVersion >= 1 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId) && (resource == null || existing().ownerUid == request.auth.uid);
+      allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+      allow create: if isOwner(userId) &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isOwner(userId) &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['migrationVersion', 'migratedFromGuestAt', 'updatedAt']);
+      allow delete: if isOwner(userId) && isValidId(userId) && existing().ownerUid == request.auth.uid;
+
+      match /workspaces/{workspaceId} {
+        allow get: if isOwner(userId) && isValidId(workspaceId) && (resource == null || existing().ownerUid == request.auth.uid);
+        allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow create: if isOwner(userId) &&
+          isValidId(workspaceId) &&
+          isValidWorkspace(incoming(), workspaceId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isOwner(userId) &&
+          isValidId(workspaceId) &&
+          isValidWorkspace(incoming(), workspaceId) &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().id == existing().id &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name',
+            'deviceId',
+            'hasPassphrase',
+            'saltB64',
+            'keyCheckCipherB64',
+            'keyCheckIvB64',
+            'encryptedSecretsCipherB64',
+            'secretsIvB64',
+            'clientUpdatedAt',
+            'syncVersion',
+            'updatedAt'
+          ]);
+        allow delete: if isOwner(userId) && isValidId(workspaceId) && existing().ownerUid == request.auth.uid;
+
+        match /projects/{projectId} {
+          allow get: if isOwner(userId) && isValidId(workspaceId) && isValidId(projectId) && (resource == null || existing().ownerUid == request.auth.uid);
+          allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+          allow create: if isOwner(userId) &&
+            isValidId(workspaceId) &&
+            isValidId(projectId) &&
+            isValidProject(incoming(), projectId, workspaceId) &&
+            incoming().createdAt == request.time &&
+            incoming().updatedAt == request.time &&
+            workspaceExistsOwned(userId, workspaceId);
+          allow update: if isOwner(userId) &&
+            isValidId(workspaceId) &&
+            isValidId(projectId) &&
+            isValidProject(incoming(), projectId, workspaceId) &&
+            incoming().ownerUid == existing().ownerUid &&
+            incoming().id == existing().id &&
+            incoming().workspaceId == existing().workspaceId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'title',
+              'ext',
+              'hasAudioAsset',
+              'hasVideoAsset',
+              'thumbDataUrl',
+              'projectData',
+              'clientUpdatedAt',
+              'syncVersion',
+              'updatedAt'
+            ]) &&
+            workspaceExistsOwned(userId, workspaceId);
+          allow delete: if isOwner(userId) && isValidId(workspaceId) && isValidId(projectId) && existing().ownerUid == request.auth.uid;
+        }
+
+        match /voice_presets/{presetId} {
+          allow get: if isOwner(userId) && isValidId(workspaceId) && isValidId(presetId) && (resource == null || existing().ownerUid == request.auth.uid);
+          allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+          allow create: if isOwner(userId) &&
+            isValidId(workspaceId) &&
+            isValidId(presetId) &&
+            isValidVoicePreset(incoming(), presetId, workspaceId) &&
+            incoming().createdAt == request.time &&
+            incoming().updatedAt == request.time &&
+            workspaceExistsOwned(userId, workspaceId);
+          allow update: if isOwner(userId) &&
+            isValidId(workspaceId) &&
+            isValidId(presetId) &&
+            isValidVoicePreset(incoming(), presetId, workspaceId) &&
+            incoming().ownerUid == existing().ownerUid &&
+            incoming().id == existing().id &&
+            incoming().workspaceId == existing().workspaceId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name',
+              'providerId',
+              'voiceId',
+              'voiceName',
+              'presetData',
+              'clientUpdatedAt',
+              'syncVersion',
+              'updatedAt'
+            ]) &&
+            workspaceExistsOwned(userId, workspaceId);
+          allow delete: if isOwner(userId) && isValidId(workspaceId) && isValidId(presetId) && existing().ownerUid == request.auth.uid;
+        }
+
+        match /pronunciation_dict/{dictId} {
+          allow get: if isOwner(userId) && isValidId(workspaceId) && isValidId(dictId) && (resource == null || existing().ownerUid == request.auth.uid);
+          allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+          allow create: if isOwner(userId) &&
+            isValidId(workspaceId) &&
+            isValidId(dictId) &&
+            isValidPronunciationDict(incoming(), dictId, workspaceId) &&
+            incoming().createdAt == request.time &&
+            incoming().updatedAt == request.time &&
+            workspaceExistsOwned(userId, workspaceId);
+          allow update: if isOwner(userId) &&
+            isValidId(workspaceId) &&
+            isValidId(dictId) &&
+            isValidPronunciationDict(incoming(), dictId, workspaceId) &&
+            incoming().ownerUid == existing().ownerUid &&
+            incoming().id == existing().id &&
+            incoming().workspaceId == existing().workspaceId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'entries',
+              'clientUpdatedAt',
+              'syncVersion',
+              'updatedAt'
+            ]) &&
+            workspaceExistsOwned(userId, workspaceId);
+          allow delete: if isOwner(userId) && isValidId(workspaceId) && isValidId(dictId) && existing().ownerUid == request.auth.uid;
+        }
+
+        match /settings/{settingId} {
+          allow get: if isOwner(userId) && isValidId(workspaceId) && isValidId(settingId) && (resource == null || existing().ownerUid == request.auth.uid);
+          allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+          allow create: if isOwner(userId) &&
+            isValidId(workspaceId) &&
+            isValidId(settingId) &&
+            isValidSettings(incoming(), settingId, workspaceId) &&
+            incoming().createdAt == request.time &&
+            incoming().updatedAt == request.time &&
+            workspaceExistsOwned(userId, workspaceId);
+          allow update: if isOwner(userId) &&
+            isValidId(workspaceId) &&
+            isValidId(settingId) &&
+            isValidSettings(incoming(), settingId, workspaceId) &&
+            incoming().ownerUid == existing().ownerUid &&
+            incoming().id == existing().id &&
+            incoming().workspaceId == existing().workspaceId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'settingsData',
+              'clientUpdatedAt',
+              'syncVersion',
+              'updatedAt'
+            ]) &&
+            workspaceExistsOwned(userId, workspaceId);
+          allow delete: if isOwner(userId) && isValidId(workspaceId) && isValidId(settingId) && existing().ownerUid == request.auth.uid;
+        }
+
+        match /assets/{assetId} {
+          allow get: if isOwner(userId) && isValidId(workspaceId) && isValidId(assetId) && (resource == null || existing().ownerUid == request.auth.uid);
+          allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+          allow create: if isOwner(userId) &&
+            isValidId(workspaceId) &&
+            isValidId(assetId) &&
+            isValidAssetManifest(incoming(), assetId, workspaceId) &&
+            incoming().createdAt == request.time &&
+            incoming().updatedAt == request.time &&
+            workspaceExistsOwned(userId, workspaceId);
+          allow update: if isOwner(userId) &&
+            isValidId(workspaceId) &&
+            isValidId(assetId) &&
+            isValidAssetManifest(incoming(), assetId, workspaceId) &&
+            incoming().ownerUid == existing().ownerUid &&
+            incoming().id == existing().id &&
+            incoming().workspaceId == existing().workspaceId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'projectId',
+              'kind',
+              'storagePath',
+              'mimeType',
+              'byteLength',
+              'sceneId',
+              'durationSec',
+              'metadata',
+              'clientUpdatedAt',
+              'syncVersion',
+              'updatedAt'
+            ]) &&
+            workspaceExistsOwned(userId, workspaceId);
+          allow delete: if isOwner(userId) && isValidId(workspaceId) && isValidId(assetId) && existing().ownerUid == request.auth.uid;
+        }
+      }
+    }
+  }
+}

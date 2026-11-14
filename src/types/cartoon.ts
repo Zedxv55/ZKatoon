@@ -702,10 +702,17 @@ export interface WorkspaceSecrets {
   customTtsKey?: string;
 }
 
+export interface AuthUserProfile {
+  uid: string;
+  displayName: string;
+  photoURL: string | null;
+}
+
 export interface WorkspaceMeta {
   id: string;
   name: string;
   deviceId: string;
+  ownerUid?: string; // undefined or 'guest' = Guest local workspace; otherwise Firebase UID
   createdAt: number;
   updatedAt: number;
   hasPassphrase: boolean;
@@ -729,3 +736,11 @@ export interface SavedProjectRecord {
   thumb: string | null;
   at: number;
 }
+
+export interface MergeAudioOutcome {
+  ok: boolean;
+  mergedCount: number;
+  failedScenes: Array<{ sceneId: string; reason: string }>;
+  error?: string;
+}
+

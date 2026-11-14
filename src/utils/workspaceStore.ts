@@ -16,6 +16,7 @@ import {
   generateUuid,
   verifyAndUnlockPassphrase,
 } from './workspaceCrypto';
+import { filterWorkspacesForAccount, resolveAccountScopeKey } from './accountLifecycle';
 
 const DB_NAME = 'zkatoon_workspace_db';
 const DB_VERSION = 2;
@@ -75,15 +76,19 @@ function openWorkspaceDb(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
+async function idbGetAllStrict<T>(storeName: string): Promise<T[]> {
+  const db = await openWorkspaceDb();
+  return await new Promise<T[]>((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).getAll();
+    req.onsuccess = () => resolve((req.result as T[]) || []);
+    req.onerror = () => reject(req.error || new Error(`อ่านข้อมูลจาก ${storeName} ไม่สำเร็จ`));
+  });
+}
+
 async function idbGetAll<T>(storeName: string): Promise<T[]> {
   try {
-    const db = await openWorkspaceDb();
-    return await new Promise<T[]>((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readonly');
-      const req = tx.objectStore(storeName).getAll();
-      req.onsuccess = () => resolve((req.result as T[]) || []);
-      req.onerror = () => reject(req.error);
-    });
+    return await idbGetAllStrict<T>(storeName);
   } catch {
     return [];
   }
@@ -136,51 +141,72 @@ export function getOrCreateLocalDeviceId(): string {
   }
 }
 
-let defaultWsInitPromise: Promise<WorkspaceMeta[]> | null = null;
+const wsInitPromises = new Map<string, Promise<WorkspaceMeta[]>>();
 
-export async function listWorkspaces(): Promise<WorkspaceMeta[]> {
-  if (defaultWsInitPromise) return defaultWsInitPromise;
+export async function listWorkspaces(accountUid?: string | null): Promise<WorkspaceMeta[]> {
+  const scope = resolveAccountScopeKey(accountUid);
+  const existingPromise = wsInitPromises.get(scope);
+  if (existingPromise) return existingPromise;
+
   const run = async (): Promise<WorkspaceMeta[]> => {
-    const all = await idbGetAll<WorkspaceMeta>(STORE_WORKSPACES);
-    if (all.length === 0) {
-      const initial = await createWorkspace('พื้นที่ทำงานหลัก (Default)', 'ws_default');
+    // Use strict read so an IndexedDB failure never masquerades as an empty workspace list
+    const all = await idbGetAllStrict<WorkspaceMeta>(STORE_WORKSPACES);
+    const scoped = filterWorkspacesForAccount(all, scope);
+    if (scoped.length === 0) {
+      const defaultId = scope === 'guest' ? 'ws_default' : `ws_${scope.slice(0, 16)}_default`;
+      const defaultName = scope === 'guest' ? 'พื้นที่ทำงานหลัก (Default)' : 'Workspace บัญชีหลัก';
+      const initial = await createWorkspace(defaultName, defaultId, scope);
       return [initial];
     }
-    return all.sort((a, b) => b.updatedAt - a.updatedAt);
+    return scoped;
   };
-  defaultWsInitPromise = run().finally(() => {
-    defaultWsInitPromise = null;
+
+  const p = run().finally(() => {
+    wsInitPromises.delete(scope);
   });
-  return defaultWsInitPromise;
+  wsInitPromises.set(scope, p);
+  return p;
 }
 
-export async function getActiveWorkspace(): Promise<WorkspaceMeta> {
-  const all = await listWorkspaces();
+function activeWorkspaceStorageKey(accountUid?: string | null): string {
+  const scope = resolveAccountScopeKey(accountUid);
+  return scope === 'guest' ? ACTIVE_WORKSPACE_KEY : `${ACTIVE_WORKSPACE_KEY}_${scope}`;
+}
+
+export async function getActiveWorkspace(accountUid?: string | null): Promise<WorkspaceMeta> {
+  const scope = resolveAccountScopeKey(accountUid);
+  const scopedList = await listWorkspaces(scope);
   let activeId = '';
   try {
-    activeId = window.localStorage.getItem(ACTIVE_WORKSPACE_KEY) || '';
+    activeId = window.localStorage.getItem(activeWorkspaceStorageKey(scope)) || '';
   } catch {
     activeId = '';
   }
-  const found = all.find((w) => w.id === activeId) || all[0];
-  setActiveWorkspaceId(found.id);
+  const found = scopedList.find((w) => w.id === activeId) || scopedList[0];
+  setActiveWorkspaceId(found.id, scope);
   return found;
 }
 
-export function setActiveWorkspaceId(workspaceId: string): void {
+export function setActiveWorkspaceId(workspaceId: string, accountUid?: string | null): void {
   try {
-    window.localStorage.setItem(ACTIVE_WORKSPACE_KEY, workspaceId);
+    window.localStorage.setItem(activeWorkspaceStorageKey(accountUid), workspaceId);
   } catch {
     // ignore storage restriction
   }
 }
 
-export async function createWorkspace(name: string, fixedId?: string): Promise<WorkspaceMeta> {
+export async function createWorkspace(
+  name: string,
+  fixedId?: string,
+  accountUid?: string | null
+): Promise<WorkspaceMeta> {
+  const scope = resolveAccountScopeKey(accountUid);
   const now = Date.now();
   const ws: WorkspaceMeta = {
     id: fixedId || `ws_${generateUuid()}`,
     name: name.trim() || 'Workspace ใหม่',
     deviceId: getOrCreateLocalDeviceId(),
+    ownerUid: scope,
     createdAt: now,
     updatedAt: now,
     hasPassphrase: false,
@@ -188,7 +214,7 @@ export async function createWorkspace(name: string, fixedId?: string): Promise<W
   };
   await idbPut(STORE_WORKSPACES, ws);
   await idbPut(STORE_PRONUNCIATION, { workspaceId: ws.id, entries: DEFAULT_DICTIONARY });
-  setActiveWorkspaceId(ws.id);
+  setActiveWorkspaceId(ws.id, scope);
   return ws;
 }
 
@@ -204,10 +230,11 @@ export async function renameWorkspace(workspaceId: string, newName: string): Pro
   return updated;
 }
 
-export async function deleteWorkspace(workspaceId: string): Promise<void> {
-  const all = await listWorkspaces();
+export async function deleteWorkspace(workspaceId: string, accountUid?: string | null): Promise<void> {
+  const scope = resolveAccountScopeKey(accountUid);
+  const all = await listWorkspaces(scope);
   if (all.length <= 1) {
-    throw new Error('ต้องมีอย่างน้อย 1 Workspace ในเครื่อง');
+    throw new Error('ต้องมีอย่างน้อย 1 Workspace ในบัญชีนี้');
   }
   await idbDelete(STORE_WORKSPACES, workspaceId);
   await idbDelete(STORE_PRONUNCIATION, workspaceId);

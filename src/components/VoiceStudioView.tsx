@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   BookOpen,
   CheckCircle2,
   Download,
@@ -8,6 +9,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   Sparkles,
   Trash2,
@@ -15,6 +17,7 @@ import {
 } from 'lucide-react';
 import type {
   CartoonProject,
+  MergeAudioOutcome,
   PronunciationEntry,
   SceneAudioRecord,
   StudioSettings,
@@ -48,10 +51,13 @@ interface VoiceStudioViewProps {
   onDeleteVoicePreset: (id: string) => Promise<void>;
   onSaveDictionary: (entries: PronunciationEntry[]) => Promise<void>;
   onSaveSceneAudio: (rec: SceneAudioRecord) => Promise<void>;
-  onMergeAllAudioToStudio: () => Promise<void>;
+  onMergeAllAudioToStudio: (
+    overrideSceneMap?: Record<string, SceneAudioRecord>
+  ) => Promise<MergeAudioOutcome>;
   onOpenDemo3D: () => void;
   onGoSettings: () => void;
   onNotify: (msg: string) => void;
+  onRegisterTtsStop?: (stopFn: () => void) => () => void;
 }
 
 const EMOTIONS: Array<{ id: VoiceEmotion; label: string }> = [
@@ -82,6 +88,7 @@ export function VoiceStudioView({
   onOpenDemo3D,
   onGoSettings,
   onNotify,
+  onRegisterTtsStop,
 }: VoiceStudioViewProps) {
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
@@ -105,11 +112,34 @@ export function VoiceStudioView({
     'วันที่ 15 เวลา 06:30 น. มีคนส่งสติกเกอร์ 123 ตัวใน ZKatoon กทม.'
   );
 
-  // Per-scene synthesis status
+  // Per-scene synthesis status & honest error/retry tracking
   const [busySceneId, setBusySceneId] = useState<string | null>(null);
   const [busyAll, setBusyAll] = useState(false);
+  const [sceneErrors, setSceneErrors] = useState<Record<string, string>>({});
+  const [mergeStatus, setMergeStatus] = useState<'idle' | 'merging' | 'success' | 'error'>('idle');
+  const [mergeMessage, setMergeMessage] = useState<string | null>(null);
   const [playingSceneId, setPlayingSceneId] = useState<string | null>(null);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const ttsAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const stopAll = () => {
+      ttsAbortRef.current?.abort();
+      ttsAbortRef.current = null;
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current = null;
+      }
+      setPlayingSceneId(null);
+      setBusySceneId(null);
+      setBusyAll(false);
+    };
+    const unregister = onRegisterTtsStop ? onRegisterTtsStop(stopAll) : undefined;
+    return () => {
+      unregister?.();
+      stopAll();
+    };
+  }, [onRegisterTtsStop]);
 
   const meta = TTS_PROVIDERS_META[settings.ttsProvider];
 
@@ -193,11 +223,14 @@ export function VoiceStudioView({
     onNotify(`ใช้ Preset "${p.name}" แล้ว`);
   }
 
-  async function synthesizeSingleScene(sceneIdx: number) {
-    if (!project) return;
+  async function synthesizeSingleScene(
+    sceneIdx: number
+  ): Promise<{ ok: boolean; rec?: SceneAudioRecord; sceneId: string; error?: string }> {
+    if (!project) return { ok: false, sceneId: `S${sceneIdx + 1}`, error: 'ไม่พบโปรเจกต์' };
     const scene = project.scenes[sceneIdx];
-    if (!scene) return;
-    const sceneId = scene.id || `S${sceneIdx + 1}`;
+    const sceneId = scene?.id || `S${sceneIdx + 1}`;
+    if (!scene) return { ok: false, sceneId, error: 'ไม่พบข้อมูลฉาก' };
+
     const providerId = scene.voiceConfig?.providerId || settings.ttsProvider;
     const voiceId = scene.voiceConfig?.voiceId || settings.ttsVoiceId;
     const voiceName = scene.voiceConfig?.voiceName || settings.ttsVoiceName || voiceId;
@@ -206,7 +239,15 @@ export function VoiceStudioView({
     const styleInstruction = scene.voiceConfig?.styleInstruction || settings.voiceStyle;
 
     setBusySceneId(sceneId);
+    setSceneErrors((prev) => {
+      const next = { ...prev };
+      delete next[sceneId];
+      return next;
+    });
     try {
+      ttsAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      ttsAbortRef.current = ctrl;
       const adapter = getTtsAdapter(providerId);
       const res = await adapter.synthesize({
         text: scene.narration,
@@ -219,6 +260,7 @@ export function VoiceStudioView({
         dictionary,
         settings,
         secrets,
+        signal: ctrl.signal,
       });
       const projId = project.id || 'active-project';
       const rec: SceneAudioRecord = {
@@ -241,22 +283,69 @@ export function VoiceStudioView({
       };
       await onSaveSceneAudio(rec);
       onNotify(`พากย์เสียงฉาก ${sceneId} สำเร็จ (${res.durationSec.toFixed(2)} วิ)`);
+      return { ok: true, rec, sceneId };
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : 'พากย์เสียงไม่สำเร็จ');
+      const msg = err instanceof Error ? err.message : 'พากย์เสียงไม่สำเร็จ';
+      setSceneErrors((prev) => ({ ...prev, [sceneId]: msg }));
+      onNotify(`ฉาก ${sceneId} ล้มเหลว: ${msg}`);
+      return { ok: false, sceneId, error: msg };
     } finally {
       setBusySceneId(null);
     }
   }
 
+  async function runMergeToStudio(overrideMap?: Record<string, SceneAudioRecord>) {
+    setMergeStatus('merging');
+    setMergeMessage('กำลังถอดรหัสและรวมเสียงเข้า Timeline…');
+    const outcome = await onMergeAllAudioToStudio(overrideMap);
+    if (outcome.failedScenes.length > 0) {
+      setSceneErrors((prev) => {
+        const next = { ...prev };
+        for (const f of outcome.failedScenes) {
+          next[f.sceneId] = `Merge/Decode ล้มเหลว: ${f.reason}`;
+        }
+        return next;
+      });
+    }
+    if (outcome.ok) {
+      setMergeStatus('success');
+      setMergeMessage(`รวมเสียง ${outcome.mergedCount} ฉากเข้า Timeline สำเร็จ`);
+    } else {
+      setMergeStatus('error');
+      setMergeMessage(outcome.error || 'รวมเสียงเข้า Timeline ไม่สำเร็จ');
+    }
+    return outcome;
+  }
+
   async function handleGenerateAllScenes() {
     if (!project) return;
     setBusyAll(true);
+    setMergeStatus('idle');
+    setMergeMessage(null);
+    const freshMap: Record<string, SceneAudioRecord> = { ...sceneAudioMap };
+    const failedIds: string[] = [];
     try {
       for (let i = 0; i < project.scenes.length; i++) {
-        await synthesizeSingleScene(i);
+        const res = await synthesizeSingleScene(i);
+        if (res.ok && res.rec) {
+          freshMap[res.sceneId] = res.rec;
+        } else {
+          failedIds.push(res.sceneId);
+        }
       }
-      await onMergeAllAudioToStudio();
-      onNotify('พากย์เสียงครบทุกฉากและรวมเสียงเข้าสตูดิโอแล้ว');
+
+      if (failedIds.length > 0) {
+        setMergeStatus('error');
+        const msg = `สร้างเสียงไม่สำเร็จ ${failedIds.length} ฉาก (${failedIds.join(', ')}) — กด "ลองใหม่" ที่ฉากที่มีปัญหา แล้วค่อยกด "รวมเสียงเข้าสตูดิโอ"`;
+        setMergeMessage(msg);
+        onNotify(msg);
+        return;
+      }
+
+      const mergeOutcome = await runMergeToStudio(freshMap);
+      if (mergeOutcome.ok) {
+        onNotify(`พากย์เสียงครบ ${mergeOutcome.mergedCount} ฉากและรวมเสียงเข้าสตูดิโอสำเร็จ`);
+      }
     } finally {
       setBusyAll(false);
     }
@@ -673,15 +762,48 @@ export function VoiceStudioView({
               </button>
               <button
                 type="button"
-                onClick={onMergeAllAudioToStudio}
-                className="inline-flex items-center gap-1.5 min-h-[40px] rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-4 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 cursor-pointer"
+                disabled={mergeStatus === 'merging'}
+                onClick={() => runMergeToStudio()}
+                className="inline-flex items-center gap-1.5 min-h-[40px] rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-4 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-50 cursor-pointer"
               >
                 <Layers className="h-4 w-4" aria-hidden="true" />
-                <span>รวมเสียงเข้าสตูดิโอ</span>
+                <span>{mergeStatus === 'merging' ? 'กำลังรวมเสียง…' : 'รวมเสียงเข้าสตูดิโอ'}</span>
               </button>
             </div>
           )}
         </div>
+
+        {mergeMessage && (
+          <div
+            role={mergeStatus === 'error' ? 'alert' : 'status'}
+            className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-xs ${
+              mergeStatus === 'error'
+                ? 'border-rose-500/40 bg-rose-500/10 text-rose-200'
+                : mergeStatus === 'success'
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                  : 'border-violet-500/40 bg-violet-500/10 text-violet-200'
+            }`}
+          >
+            <div className="flex items-start gap-2">
+              {mergeStatus === 'error' ? (
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-rose-400" aria-hidden="true" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5 text-emerald-400" aria-hidden="true" />
+              )}
+              <span>{mergeMessage}</span>
+            </div>
+            {mergeStatus === 'error' && (
+              <button
+                type="button"
+                onClick={() => runMergeToStudio()}
+                className="inline-flex items-center gap-1 self-start sm:self-auto rounded-lg bg-rose-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-rose-500 cursor-pointer"
+              >
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>ลองรวมเสียงใหม่</span>
+              </button>
+            )}
+          </div>
+        )}
 
         {!project ? (
           <div className="rounded-xl border border-dashed border-white/15 bg-[#0b0c12] p-8 text-center space-y-3">
@@ -808,6 +930,27 @@ export function VoiceStudioView({
                       </div>
                     )}
                   </div>
+
+                  {sceneErrors[sid] && (
+                    <div
+                      role="alert"
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 text-rose-400 shrink-0" aria-hidden="true" />
+                        <span>ผิดพลาด ({sid}): {sceneErrors[sid]}</span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => synthesizeSingleScene(idx)}
+                        className="inline-flex items-center gap-1 rounded-md bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-rose-500 disabled:opacity-50 cursor-pointer"
+                      >
+                        <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                        <span>ลองใหม่ (Retry)</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}

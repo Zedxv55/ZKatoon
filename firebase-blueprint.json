@@ -1,0 +1,166 @@
+{
+  "entities": {
+    "UserSyncProfile": {
+      "title": "UserSyncProfile",
+      "description": "Non-PII cloud sync & migration profile scoped strictly by Firebase UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "migrationVersion": { "type": "integer" },
+        "migratedFromGuestAt": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "ownerUid", "migrationVersion", "createdAt", "updatedAt"]
+    },
+    "WorkspaceCloudMeta": {
+      "title": "WorkspaceCloudMeta",
+      "description": "Cloud workspace metadata. Never stores plain-text API keys or secrets.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "deviceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "hasPassphrase": { "type": "boolean" },
+        "saltB64": { "type": "string", "maxLength": 256 },
+        "keyCheckCipherB64": { "type": "string", "maxLength": 512 },
+        "keyCheckIvB64": { "type": "string", "maxLength": 256 },
+        "encryptedSecretsCipherB64": { "type": "string", "maxLength": 16384 },
+        "secretsIvB64": { "type": "string", "maxLength": 256 },
+        "clientUpdatedAt": { "type": "number" },
+        "syncVersion": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "name", "deviceId", "hasPassphrase", "clientUpdatedAt", "syncVersion", "createdAt", "updatedAt"]
+    },
+    "ProjectCloudRecord": {
+      "title": "ProjectCloudRecord",
+      "description": "Cloud cartoon project metadata & structured script/scenes map (no audio/video binary blobs).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "ext": { "type": "string", "maxLength": 16 },
+        "hasAudioAsset": { "type": "boolean" },
+        "hasVideoAsset": { "type": "boolean" },
+        "thumbDataUrl": { "type": "string", "maxLength": 65536 },
+        "projectData": { "type": "object" },
+        "clientUpdatedAt": { "type": "number" },
+        "syncVersion": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "workspaceId", "title", "ext", "hasAudioAsset", "hasVideoAsset", "projectData", "clientUpdatedAt", "syncVersion", "createdAt", "updatedAt"]
+    },
+    "VoicePresetCloud": {
+      "title": "VoicePresetCloud",
+      "description": "Saved TTS voice preset metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "providerId": { "type": "string", "maxLength": 64 },
+        "voiceId": { "type": "string", "maxLength": 200 },
+        "voiceName": { "type": "string", "maxLength": 200 },
+        "presetData": { "type": "object" },
+        "clientUpdatedAt": { "type": "number" },
+        "syncVersion": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "workspaceId", "name", "providerId", "voiceId", "voiceName", "presetData", "clientUpdatedAt", "syncVersion", "createdAt", "updatedAt"]
+    },
+    "PronunciationDictCloud": {
+      "title": "PronunciationDictCloud",
+      "description": "Thai pronunciation custom dictionary entries per workspace.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "entries": { "type": "array" },
+        "clientUpdatedAt": { "type": "number" },
+        "syncVersion": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "workspaceId", "entries", "clientUpdatedAt", "syncVersion", "createdAt", "updatedAt"]
+    },
+    "SettingsCloud": {
+      "title": "SettingsCloud",
+      "description": "Studio non-secret settings for a workspace.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "settingsData": { "type": "object" },
+        "clientUpdatedAt": { "type": "number" },
+        "syncVersion": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "workspaceId", "settingsData", "clientUpdatedAt", "syncVersion", "createdAt", "updatedAt"]
+    },
+    "AssetManifestCloud": {
+      "title": "AssetManifestCloud",
+      "description": "Metadata pointer to binary audio or GLB assets stored in Firebase Storage (never raw binary in Firestore).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "kind": { "type": "string", "enum": ["scene_audio", "master_audio", "glb_model"] },
+        "storagePath": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "mimeType": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "byteLength": { "type": "integer" },
+        "sceneId": { "type": "string", "maxLength": 128 },
+        "durationSec": { "type": "number" },
+        "metadata": { "type": "object" },
+        "clientUpdatedAt": { "type": "number" },
+        "syncVersion": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "workspaceId", "projectId", "kind", "storagePath", "mimeType", "byteLength", "clientUpdatedAt", "syncVersion", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserSyncProfile" },
+      "description": "User-owned cloud sync profile (UID-isolated, zero PII)"
+    },
+    "/users/{userId}/workspaces/{workspaceId}": {
+      "schema": { "$ref": "#/entities/WorkspaceCloudMeta" },
+      "description": "User-owned workspaces"
+    },
+    "/users/{userId}/workspaces/{workspaceId}/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/ProjectCloudRecord" },
+      "description": "User-owned cartoon projects inside a workspace"
+    },
+    "/users/{userId}/workspaces/{workspaceId}/voice_presets/{presetId}": {
+      "schema": { "$ref": "#/entities/VoicePresetCloud" },
+      "description": "User-owned voice presets inside a workspace"
+    },
+    "/users/{userId}/workspaces/{workspaceId}/pronunciation_dict/{dictId}": {
+      "schema": { "$ref": "#/entities/PronunciationDictCloud" },
+      "description": "User-owned Thai pronunciation dictionaries inside a workspace"
+    },
+    "/users/{userId}/workspaces/{workspaceId}/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/SettingsCloud" },
+      "description": "User-owned studio settings inside a workspace"
+    },
+    "/users/{userId}/workspaces/{workspaceId}/assets/{assetId}": {
+      "schema": { "$ref": "#/entities/AssetManifestCloud" },
+      "description": "Manifest pointing to binary audio/GLB files stored in Firebase Storage"
+    }
+  }
+}

@@ -1,14 +1,21 @@
+import { useState } from 'react';
 import {
+  ChevronDown,
   Clapperboard,
   Film,
   FolderKanban,
   HardDrive,
   KeyRound,
   Lock,
+  LogIn,
+  LogOut,
   Mic2,
+  RefreshCw,
   Sparkles,
+  User,
   Users,
 } from 'lucide-react';
+import type { AuthUserProfile } from '../types/cartoon';
 
 export type AppTab =
   | 'create'
@@ -26,6 +33,11 @@ interface TopBarProps {
   hasProject: boolean;
   workspaceName: string;
   isLocked: boolean;
+  authProfile: AuthUserProfile | null;
+  isAuthBusy: boolean;
+  onSignInGoogle: () => void;
+  onSwitchAccount: () => void;
+  onSignOut: () => void;
   onOpenDemo3D: () => void;
 }
 
@@ -46,8 +58,15 @@ export function TopBar({
   hasProject,
   workspaceName,
   isLocked,
+  authProfile,
+  isAuthBusy,
+  onSignInGoogle,
+  onSwitchAccount,
+  onSignOut,
   onOpenDemo3D,
 }: TopBarProps) {
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+
   return (
     <>
       <header className="sticky top-0 z-30 border-b border-white/[0.08] bg-[#0a0b10]">
@@ -92,11 +111,129 @@ export function TopBar({
               type="button"
               onClick={() => onChangeTab('storage')}
               title="จัดการ Workspace ในเครื่อง"
-              className="hidden sm:inline-flex items-center gap-1.5 whitespace-nowrap min-h-[36px] rounded-lg border border-white/10 bg-[#13141d] px-2.5 text-xs text-[#d6d3eb] hover:border-violet-400/40 cursor-pointer"
+              className="hidden md:inline-flex items-center gap-1.5 whitespace-nowrap min-h-[36px] rounded-lg border border-white/10 bg-[#13141d] px-2.5 text-xs text-[#d6d3eb] hover:border-violet-400/40 cursor-pointer"
             >
               {isLocked && <Lock className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />}
-              <span className="max-w-[120px] truncate">{workspaceName}</span>
+              <span className="max-w-[110px] truncate">{workspaceName}</span>
             </button>
+
+            {/* Account / Guest Menu */}
+            <div className="relative">
+              <button
+                type="button"
+                disabled={isAuthBusy}
+                onClick={() => setAccountMenuOpen((o) => !o)}
+                aria-expanded={accountMenuOpen}
+                aria-label="บัญชีผู้ใช้และโหมด Guest"
+                className="inline-flex items-center gap-1.5 whitespace-nowrap min-h-[36px] rounded-lg border border-white/10 bg-[#13141d] px-2.5 text-xs font-medium text-[#e7e4f8] hover:border-violet-400/50 disabled:opacity-50 cursor-pointer"
+              >
+                {authProfile?.photoURL ? (
+                  <img
+                    src={authProfile.photoURL}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    className="h-5 w-5 rounded-full object-cover"
+                  />
+                ) : (
+                  <User className="h-3.5 w-3.5 text-violet-400 shrink-0" aria-hidden="true" />
+                )}
+                <span className="max-w-[96px] truncate">
+                  {authProfile ? authProfile.displayName : 'Guest'}
+                </span>
+                <ChevronDown className="h-3 w-3 text-[#9894b8]" aria-hidden="true" />
+              </button>
+
+              {accountMenuOpen && (
+                <div
+                  role="dialog"
+                  aria-label="จัดการบัญชีผู้ใช้"
+                  className="absolute right-0 mt-2 w-72 rounded-2xl border border-white/15 bg-[#13141d] p-4 shadow-2xl z-50 space-y-3"
+                >
+                  {authProfile ? (
+                    <>
+                      <div className="flex items-center gap-2.5 border-b border-white/10 pb-3">
+                        {authProfile.photoURL ? (
+                          <img
+                            src={authProfile.photoURL}
+                            alt=""
+                            referrerPolicy="no-referrer"
+                            className="h-9 w-9 rounded-full object-cover shrink-0"
+                          />
+                        ) : (
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-600/30 text-violet-200 font-bold text-sm shrink-0">
+                            {authProfile.displayName.slice(0, 1)}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-white truncate">
+                            {authProfile.displayName}
+                          </div>
+                          <div className="text-[11px] font-mono-tabular text-[#9894b8] truncate">
+                            UID: {authProfile.uid}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <button
+                          type="button"
+                          disabled={isAuthBusy}
+                          onClick={() => {
+                            setAccountMenuOpen(false);
+                            onSwitchAccount();
+                          }}
+                          className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-[#1b1d29] px-3 py-2 text-xs font-medium text-white hover:border-violet-400/50 cursor-pointer"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5 text-violet-400" aria-hidden="true" />
+                          <span>เปลี่ยนบัญชี Google</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isAuthBusy}
+                          onClick={() => {
+                            setAccountMenuOpen(false);
+                            onSignOut();
+                          }}
+                          className="flex w-full items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-200 hover:bg-rose-500/20 cursor-pointer"
+                        >
+                          <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>ออกจากระบบ (ใช้โหมด Guest)</span>
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="space-y-1 border-b border-white/10 pb-3">
+                        <div className="text-xs font-bold text-white">โหมด Guest (ใช้งานในเครื่อง)</div>
+                        <p className="text-[11px] text-[#9894b8] leading-relaxed">
+                          ใช้งานได้ครบทุกฟังก์ชันโดยไม่ต้องล็อกอิน ข้อมูลทั้งหมดอยู่ในเครื่องนี้ หรือเข้าสู่ระบบด้วย Google เพื่อซิงก์คลาวด์แยกตาม UID
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <button
+                          type="button"
+                          disabled={isAuthBusy}
+                          onClick={() => {
+                            setAccountMenuOpen(false);
+                            onSignInGoogle();
+                          }}
+                          className="flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-900 hover:bg-slate-100 cursor-pointer"
+                        >
+                          <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>Sign in with Google</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAccountMenuOpen(false)}
+                          className="flex w-full items-center justify-center rounded-xl border border-white/10 bg-[#1b1d29] px-3 py-2 text-xs font-medium text-[#d6d3eb] hover:text-white cursor-pointer"
+                        >
+                          Continue as Guest
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
 
             <button
               type="button"
