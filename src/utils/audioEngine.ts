@@ -685,8 +685,10 @@ export async function mergeSceneAudioRecordsToBuffer(
   const decodedPerScene: Array<AudioBuffer | null> = [];
   const sceneDurations: number[] = [];
 
-  for (const sc of scenes) {
-    const rec = sc.id ? sceneAudioMap[sc.id] : undefined;
+  for (let sceneIndex = 0; sceneIndex < scenes.length; sceneIndex++) {
+    const sc = scenes[sceneIndex];
+    const sceneId = sc.id || `S${sceneIndex + 1}`;
+    const rec = sceneAudioMap[sceneId];
     if (!rec) {
       decodedPerScene.push(null);
       sceneDurations.push(sc.manualDurationSec || Math.max(1.8, sc.narration.length / 11));
