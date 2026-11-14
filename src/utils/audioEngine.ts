@@ -699,9 +699,9 @@ export async function mergeSceneAudioRecordsToBuffer(
       const buf = await ctx.decodeAudioData(ab.slice(0));
       decodedPerScene.push(buf);
       sceneDurations.push(buf.duration);
-    } catch {
-      decodedPerScene.push(null);
-      sceneDurations.push(rec.durationSec || 2.5);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`ถอดรหัสเสียงฉาก ${sceneId} ไม่สำเร็จ — กรุณาสร้างเสียงฉากนี้ใหม่ (${reason})`);
     }
   }
 
