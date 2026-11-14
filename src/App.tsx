@@ -882,15 +882,30 @@ export default function App() {
     stopPlayback();
     try {
       const ctx = getAudioCtx();
-      const merged = await mergeSceneAudioRecordsToBuffer(ctx, project.scenes, sceneAudioMap);
-      if (!merged.voiceBuffer || !merged.rawWav) {
-        notify('ยังไม่มีไฟล์เสียงพากย์รายฉากในโปรเจกต์นี้');
+      // Read current persisted records; React state may still contain the pre-generation snapshot.
+      const projId = project.id || projectId || 'active-project';
+      const persistedMap = await listProjectSceneAudio(activeWorkspace.id, projId);
+      const currentMap: Record<string, SceneAudioRecord> = {};
+      let staleCount = 0;
+      project.scenes.forEach((scene, index) => {
+        const sceneId = scene.id || ('S' + (index + 1));
+        const rec = persistedMap[sceneId];
+        if (!rec) return;
+        if (rec.textRaw.trim() !== scene.narration.trim()) { staleCount += 1; return; }
+        currentMap[sceneId] = rec;
+      });
+      setSceneAudioMap(currentMap);
+      const validCount = Object.keys(currentMap).length;
+      if (validCount === 0) {
+        notify(staleCount > 0 ? 'เสียงที่บันทึกไว้ไม่ตรงกับบทปัจจุบัน กรุณาสร้างเสียงใหม่' : 'ยังไม่มีเสียงพากย์ที่ใช้ได้ในโปรเจกต์นี้');
         return;
       }
-      const nextProj: CartoonProject = {
-        ...project,
-        sceneDurations: merged.sceneDurations,
-      };
+      const merged = await mergeSceneAudioRecordsToBuffer(ctx, project.scenes, currentMap);
+      if (!merged.voiceBuffer || !merged.rawWav) {
+        notify('ไม่สามารถถอดรหัสเสียงพากย์ที่บันทึกไว้ได้ กรุณาสร้างเสียงใหม่');
+        return;
+      }
+      const nextProj: CartoonProject = { ...project, sceneDurations: merged.sceneDurations };
       setProject(nextProj);
       setAudioBuffer(merged.voiceBuffer);
       setAudioRaw(merged.rawWav);
@@ -898,12 +913,10 @@ export default function App() {
       setEnvelope(merged.envelope);
       setPauseCandidates(merged.pauseCandidates);
       setSpeechBounds({ ss: merged.speechStartSec, se: merged.speechEndSec });
-      setAudioNote(
-        `รวมเสียงพากย์ ${Object.keys(sceneAudioMap).length} ฉากเข้า Timeline แล้ว (${merged.voiceBuffer.duration.toFixed(1)}s)`
-      );
-      await persistProject(nextProj, merged.rawWav, 'wav', exportResult?.blob ?? null, projectId, true);
+      setAudioNote('รวมเสียงพากย์ ' + validCount + '/' + project.scenes.length + ' ฉากเข้า Timeline แล้ว (' + merged.voiceBuffer.duration.toFixed(1) + 's)');
+      await persistProject(nextProj, merged.rawWav, 'wav', exportResult?.blob ?? null, projId, true);
       setActiveTab('studio');
-      notify('รวมเสียงทุกฉากเข้า Timeline และซิงก์ Lip-Sync แล้ว');
+      notify(validCount === project.scenes.length ? 'รวมเสียงครบทุกฉากและซิงก์ Timeline แล้ว' : 'รวมเสียง ' + validCount + '/' + project.scenes.length + ' ฉากแล้ว — ยังขาดหรือมีบทเปลี่ยน ' + (project.scenes.length - validCount) + ' ฉาก');
     } catch (err) {
       notify(err instanceof Error ? err.message : 'รวมเสียงไม่สำเร็จ');
     }
