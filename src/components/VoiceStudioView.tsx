@@ -110,6 +110,12 @@ export function VoiceStudioView({
   const [busyAll, setBusyAll] = useState(false);
   const [playingSceneId, setPlayingSceneId] = useState<string | null>(null);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+
+  useEffect(() => () => {
+    audioPlayerRef.current?.pause();
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+  }, []);
 
   const meta = TTS_PROVIDERS_META[settings.ttsProvider];
 
@@ -193,10 +199,10 @@ export function VoiceStudioView({
     onNotify(`ใช้ Preset "${p.name}" แล้ว`);
   }
 
-  async function synthesizeSingleScene(sceneIdx: number) {
-    if (!project) return;
+  async function synthesizeSingleScene(sceneIdx: number, quiet = false): Promise<boolean> {
+    if (!project || (!quiet && (busyAll || busySceneId !== null))) return false;
     const scene = project.scenes[sceneIdx];
-    if (!scene) return;
+    if (!scene) return false;
     const sceneId = scene.id || `S${sceneIdx + 1}`;
     const providerId = scene.voiceConfig?.providerId || settings.ttsProvider;
     const voiceId = scene.voiceConfig?.voiceId || settings.ttsVoiceId;
@@ -204,81 +210,62 @@ export function VoiceStudioView({
     const emotion = scene.voiceConfig?.emotion || settings.voiceEmotion;
     const speed = scene.voiceConfig?.speed || settings.voiceSpeed;
     const styleInstruction = scene.voiceConfig?.styleInstruction || settings.voiceStyle;
-
+    if (!voiceId) { if (!quiet) onNotify('กรุณาเลือก Voice ก่อนสร้างเสียง'); return false; }
     setBusySceneId(sceneId);
     try {
       const adapter = getTtsAdapter(providerId);
-      const res = await adapter.synthesize({
-        text: scene.narration,
-        voiceId,
-        voiceName,
-        emotion,
-        speed,
-        pitch: scene.voiceConfig?.pitch,
-        styleInstruction,
-        dictionary,
-        settings,
-        secrets,
-      });
+      const res = await adapter.synthesize({ text: scene.narration, voiceId, voiceName, emotion, speed, pitch: scene.voiceConfig?.pitch, styleInstruction, dictionary, settings, secrets });
+      if (!res.audioBlob.size || !res.durationSec || !Number.isFinite(res.durationSec)) throw new Error('ผู้ให้บริการส่งไฟล์เสียงว่างหรือความยาวไม่ถูกต้อง');
       const projId = project.id || 'active-project';
       const rec: SceneAudioRecord = {
-        key: `${workspaceId}::${projId}::${sceneId}`,
-        workspaceId,
-        projectId: projId,
-        sceneId,
-        providerId,
-        voiceId,
-        voiceName,
-        emotion,
-        textRaw: scene.narration,
-        textPrepared: res.preparedText,
-        audioBlob: res.audioBlob,
-        mimeType: res.mimeType,
-        durationSec: res.durationSec,
-        envelope: res.envelope,
-        phonemeMarks: res.phonemeMarks,
-        generatedAt: Date.now(),
+        key: `${workspaceId}::${projId}::${sceneId}`, workspaceId, projectId: projId, sceneId,
+        providerId, voiceId, voiceName, emotion, textRaw: scene.narration, textPrepared: res.preparedText,
+        audioBlob: res.audioBlob, mimeType: res.mimeType, durationSec: res.durationSec,
+        envelope: res.envelope, phonemeMarks: res.phonemeMarks, generatedAt: Date.now(),
       };
       await onSaveSceneAudio(rec);
-      onNotify(`พากย์เสียงฉาก ${sceneId} สำเร็จ (${res.durationSec.toFixed(2)} วิ)`);
+      if (!quiet) onNotify(`พากย์เสียงฉาก ${sceneId} สำเร็จ (${res.durationSec.toFixed(2)} วิ)`);
+      return true;
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : 'พากย์เสียงไม่สำเร็จ');
-    } finally {
-      setBusySceneId(null);
-    }
+      if (!quiet) onNotify(err instanceof Error ? err.message : 'พากย์เสียงไม่สำเร็จ');
+      return false;
+    } finally { setBusySceneId(null); }
   }
 
   async function handleGenerateAllScenes() {
-    if (!project) return;
+    if (!project || busyAll || busySceneId !== null) return;
     setBusyAll(true);
+    let successCount = 0;
+    const failedScenes: string[] = [];
     try {
       for (let i = 0; i < project.scenes.length; i++) {
-        await synthesizeSingleScene(i);
+        const ok = await synthesizeSingleScene(i, true);
+        if (ok) successCount++;
+        else failedScenes.push(project.scenes[i]?.id || `S${i + 1}`);
       }
-      await onMergeAllAudioToStudio();
-      onNotify('พากย์เสียงครบทุกฉากและรวมเสียงเข้าสตูดิโอแล้ว');
-    } finally {
-      setBusyAll(false);
-    }
+      if (successCount > 0) await onMergeAllAudioToStudio();
+      if (failedScenes.length) onNotify(`สร้างเสียงสำเร็จ ${successCount}/${project.scenes.length} ฉาก — ไม่สำเร็จ: ${failedScenes.join(', ')}`);
+      else onNotify(`สร้างเสียงครบ ${successCount} ฉากแล้ว`);
+    } catch (err) { onNotify(err instanceof Error ? err.message : 'การสร้างเสียงทั้งหมดไม่สำเร็จ'); }
+    finally { setBusyAll(false); }
   }
 
   function playSceneAudio(rec: SceneAudioRecord) {
-    if (audioPlayerRef.current) {
-      audioPlayerRef.current.pause();
-      audioPlayerRef.current = null;
-    }
+    audioPlayerRef.current?.pause();
+    if (audioUrlRef.current) { URL.revokeObjectURL(audioUrlRef.current); audioUrlRef.current = null; }
     const url = URL.createObjectURL(rec.audioBlob);
+    audioUrlRef.current = url;
     const audio = new Audio(url);
     audioPlayerRef.current = audio;
     setPlayingSceneId(rec.sceneId);
-    audio.onended = () => {
-      setPlayingSceneId(null);
+    const release = () => {
+      if (audioUrlRef.current === url) audioUrlRef.current = null;
       URL.revokeObjectURL(url);
+      if (audioPlayerRef.current === audio) audioPlayerRef.current = null;
+      setPlayingSceneId(null);
     };
-    void audio.play().catch(() => {
-      setPlayingSceneId(null);
-      URL.revokeObjectURL(url);
-    });
+    audio.onended = release;
+    void audio.play().catch(release);
   }
 
   const preparedSample = prepareThaiSpeechText(sampleThaiTest, { dictionary });
@@ -674,6 +661,7 @@ export function VoiceStudioView({
               <button
                 type="button"
                 onClick={onMergeAllAudioToStudio}
+                disabled={busyAll || busySceneId !== null}
                 className="inline-flex items-center gap-1.5 min-h-[40px] rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-4 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 cursor-pointer"
               >
                 <Layers className="h-4 w-4" aria-hidden="true" />
@@ -698,7 +686,9 @@ export function VoiceStudioView({
           <div className="space-y-3">
             {project.scenes.map((sc, idx) => {
               const sid = sc.id || `S${idx + 1}`;
-              const rec = sceneAudioMap[sid];
+              const storedRec = sceneAudioMap[sid];
+              const audioIsStale = Boolean(storedRec && storedRec.textRaw.trim() !== sc.narration.trim());
+              const rec = audioIsStale ? undefined : storedRec;
               const isBusy = busySceneId === sid;
               const prepared = prepareThaiSpeechText(sc.narration, { dictionary });
               return (
@@ -748,7 +738,7 @@ export function VoiceStudioView({
 
                       <button
                         type="button"
-                        disabled={isBusy}
+                        disabled={isBusy || busyAll || busySceneId !== null}
                         onClick={() => synthesizeSingleScene(idx)}
                         className="min-h-[34px] rounded-lg bg-violet-600 px-3 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50 cursor-pointer"
                       >
@@ -793,6 +783,10 @@ export function VoiceStudioView({
                     }}
                     className="w-full rounded-lg border border-white/10 bg-[#0b0c12] p-2.5 text-xs text-white"
                   />
+
+                  {audioIsStale && (
+                    <p className="text-[11px] text-amber-300">บทพูดถูกแก้ไขหลังสร้างเสียง — เสียงเดิมไม่ตรงกับบท กรุณาสร้างเสียงฉากนี้ใหม่ก่อนรวมเสียง</p>
+                  )}
 
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-[11px] text-[#9894b8]">
                     <span className="truncate">คำอ่านที่เตรียมส่ง TTS: {prepared}</span>
