@@ -6,6 +6,7 @@ import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { concatWavClips } from './src/utils/wavUtils.ts';
 import { normalizeProject, parseJsonSafely } from './src/utils/projectLogic.ts';
+import { registerPlatformRoutes } from './server/routes.ts';
 import type {
   CartoonEnding,
   CartoonLength,
@@ -157,19 +158,28 @@ async function callPyThaiEndpoint(
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '6mb' }));
+  app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
+  app.use((req, res, next) => {
+    if (req.path === '/api/payments/webhook') return next();
+    return express.json({ limit: '25mb' })(req, res, next);
+  });
 
   app.get('/api/health', (_req, res) => {
-    const aiReady = Boolean(process.env.GEMINI_API_KEY?.trim());
+    const aiReady = Boolean(process.env.GEMINI_API_KEY?.trim() || process.env.OPENROUTER_API_KEY?.trim());
     res.json({
       ok: true,
       aiReady,
+      storageMode: 'local-server-store',
       models: {
         script: 'gemini-4-hydrogen',
         tts: 'gemini-3.8-flash-lite-tts',
+        defaultBrain: 'nvidia/nemotron-3.5-super-vl:free',
+        defaultVoice: 'fish-audio/s2.1-pro-free:free',
       },
     });
   });
+
+  registerPlatformRoutes(app);
 
   app.post('/api/generate-script', async (req, res) => {
     const ai = createGeminiClient();

@@ -21,3 +21,10 @@
 10. Unbounded array (`entries.size() > 500`) on pronunciation dictionary -> PERMISSION_DENIED
 11. Orphaned project/preset write targeting non-existent workspace -> PERMISSION_DENIED
 12. Ghost field injection (`isAdmin: true`) on user profile -> PERMISSION_DENIED
+
+## 3. Platform SaaS Security Invariants
+13. Super Admin allowlist strictly requires `request.auth.token.email_verified == true` AND exact email in `['zbcd1053@gmail.com', 'zeetosit@gmail.com']`.
+14. Users may NEVER self-modify `role`, `tier`, `status`, `wallet.balance`, `credit_ledger`, `access_codes`, or `payments.status` directly in Firestore.
+15. Published CMS pages (`pages` where `status == 'published'`) are readable; draft pages and admin settings/logs are strictly Super Admin only.
+16. Encrypted BYOK credentials are stored ONLY server-side via AES-256-GCM and never written to client-readable Firestore collections.
+

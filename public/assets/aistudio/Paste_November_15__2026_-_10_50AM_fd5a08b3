@@ -1,0 +1,1386 @@
+# MASTER PROMPT — ZKATOON AI VIDEO STUDIO
+## Existing Project Upgrade | Full-Stack Platform | AI Video Creation | Admin System
+
+คุณคือทีมวิศวกรซอฟต์แวร์ระดับ Senior ประกอบด้วย Software Architect, Full-Stack Developer, AI Engineer, Backend Engineer, Security Engineer, UI/UX Designer และ Video Rendering Engineer
+
+หน้าที่คือพัฒนาโปรเจกต์ ZKatoon เดิมให้กลายเป็นแพลตฟอร์ม AI Video Studio แบบ Full-Stack ที่ใช้งานจริงได้
+
+**สำคัญที่สุด: ต้องพัฒนาต่อยอดจาก Source Code เดิม ห้ามสร้างโปรเจกต์ใหม่ทับ ห้ามลบฟังก์ชันที่ใช้งานได้ และห้ามเปลี่ยนโครงสร้างโดยไม่จำเป็น**
+
+---
+
+# PART 0 — PROJECT PRESERVATION & AUDIT
+
+ก่อนแก้ไขโค้ด ให้ตรวจสอบโปรเจกต์ที่เปิดอยู่ใน Google AI Studio Build Mode
+
+สิ่งที่ต้องตรวจสอบ:
+
+1. โครงสร้าง Folder และไฟล์ทั้งหมด
+2. Framework และเวอร์ชันที่ใช้งาน
+3. Frontend และ Backend
+4. ระบบ Authentication ที่มีอยู่
+5. Database และ Storage ที่เชื่อมต่อ
+6. API และโมเดล AI ที่ใช้งานอยู่
+7. ระบบสร้างวิดีโอเดิม
+8. ระบบ Preview และ Export
+9. UI/UX และหน้าเว็บไซต์เดิม
+10. ปัญหาที่มีอยู่และฟังก์ชันที่ยังทำงานไม่สมบูรณ์
+
+สร้างเอกสาร PROJECT_AUDIT.md ประกอบด้วย:
+
+- Current Architecture
+- Existing Features
+- Working Components
+- Broken Components
+- Missing Components
+- Dependencies
+- Security Risks
+- Database Structure
+- Integration Opportunities
+- Recommended Upgrade Plan
+
+สร้าง Backup หรือ Git Checkpoint ก่อนแก้ไขทุกครั้ง
+
+กฎสำคัญ:
+
+- ห้ามลบไฟล์เดิมเพื่อสร้างระบบใหม่แทนโดยไม่มีเหตุผล
+- ห้ามเปลี่ยน URL และ Route เดิมโดยไม่จำเป็น
+- ห้ามทำให้โปรเจกต์เดิมเปิดไม่ได้
+- ห้ามสร้าง Mock Data แล้วนำเสนอเสมือนเป็นข้อมูลจริง
+- หากฟังก์ชันใดใช้งานได้อยู่แล้ว ให้รักษาพฤติกรรมเดิมไว้
+- ใช้ Feature Flag เพื่อทยอยเปิดระบบใหม่
+- หากพบข้อจำกัดของระบบเดิม ให้แก้เฉพาะจุดและอธิบายผลกระทบ
+
+เมื่อ Audit เสร็จ ให้ดำเนินการพัฒนาตามลำดับด้านล่าง ไม่หยุดเพียงแค่เขียนแผนงาน
+
+---
+
+# PART 1 — BRAND IDENTITY & SPLASH SCREEN
+
+ชื่อแพลตฟอร์ม:
+
+ZKatoon AI Video Studio
+
+ทำระบบเปิดเว็บไซต์ให้รวดเร็ว
+
+ขั้นตอนเปิดเว็บ:
+
+1. แสดงโลโก้ ZKatoon
+2. ใช้ Animation แบบเรียบง่ายและลื่นไหล
+3. แสดงข้อความสั้น ๆ เช่น "Create Your Story with AI"
+4. ใช้เวลาประมาณ 0.5–0.8 วินาที
+5. เข้าหน้าเว็บไซต์ทันที
+
+ข้อกำหนด:
+- ไม่ใช้วิดีโอพื้นหลังขนาดใหญ่
+- ไม่โหลดภาพหรือไฟล์ขนาดใหญ่โดยไม่จำเป็น
+- รองรับ Mobile และ Desktop
+- รองรับ Reduced Motion
+- โหลดเฉพาะทรัพยากรที่จำเป็นในแต่ละหน้า
+
+ออกแบบ UI โดยใช้แนวทาง Premium Dark Creative Studio
+
+ภาพรวม:
+- Dark Navy / Black
+- Indigo / Purple / Blue เป็นสี Accent
+- Background สะอาด
+- Cards มีขอบมน
+- Animation นุ่มนวล
+- Typography อ่านง่าย
+- UI ภาษาไทยเป็นหลัก
+- รองรับภาษาอังกฤษในอนาคต
+
+อย่าทำให้หน้าตาเหมือน Dashboard สำเร็จรูปทั่วไป ต้องให้ความรู้สึกเหมือน Creative Software จริง
+
+---
+
+# PART 2 — FIRST-TIME USER ONBOARDING
+
+เมื่อผู้ใช้เข้าครั้งแรก ให้แสดงขั้นตอนเลือกความต้องการสร้างวิดีโอ
+
+ทำเป็น Wizard แบบหลายขั้นตอน มี Progress Indicator และปุ่ม Back / Next
+
+### STEP 1: คุณต้องการสร้างวิดีโอประเภทใด?
+
+ตัวเลือก:
+
+- AI Cartoon
+- 2D Animation
+- 3D Animation
+- Claymation
+- Explainer Video
+- Historical Animation
+- Map Animation
+- Geography
+- Documentary
+- Cinematic
+- Product Advertisement
+- Social Media Shorts
+- Whiteboard Animation
+- Custom Project
+
+แสดงภาพตัวอย่างในแต่ละประเภท
+
+### STEP 2: สไตล์ที่ต้องการ
+
+- Cut Paper
+- Crosshatch
+- Riso Print
+- Sketchbook
+- Math Animation
+- Pixel Art
+- Isometric
+- 2D Cartoon
+- 3D Cartoon
+- Clay 3D
+- Cinema Realistic
+- Custom Reference
+
+### STEP 3: ระยะเวลาวิดีโอ
+
+- 15 วินาที
+- 30 วินาที
+- 45 วินาที
+- 60 วินาที
+- Custom Duration
+
+### STEP 4: รูปแบบวิดีโอ
+
+- 9:16
+- 16:9
+- 1:1
+- 4:5
+
+### STEP 5: ภาษา
+
+- ภาษาไทย
+- English
+- Multilingual
+- Custom Language
+
+ต้องรองรับตัวอักษรภาษาไทยได้อย่างสมบูรณ์
+
+### STEP 6: เสียง
+
+- AI Voice
+- อัปโหลดเสียงของตนเอง
+- เพลงประกอบอย่างเดียว
+- ไม่มีเสียง
+- Voice + Music + SFX
+
+### STEP 7: งบประมาณและประเภทบัญชี
+
+- Free / BYOK ใช้ API Key ของตัวเอง
+- Studio Pass 350 บาท/เดือน ใช้ API ส่วนกลางของ ZKatoon
+
+บันทึกข้อมูลที่เลือกไว้เพื่อใช้เป็น Default ของสมาชิก
+
+หลังสมัครสมาชิกไม่ต้องถามข้อมูลตั้งต้นซ้ำทุกครั้ง
+
+สามารถเปลี่ยนค่าได้ในหน้า Settings
+
+---
+
+# PART 3 — AUTHENTICATION & MEMBERSHIP
+
+ใช้ Firebase Authentication หากระบบเดิมยังไม่มีระบบที่เทียบเท่า
+
+รองรับ:
+
+- Email + Password
+- Email Verification
+- Forgot Password
+- Logout
+- Session Management
+- Google Sign-In หากตั้งค่าได้
+
+ห้ามเปิดใช้งานระบบสร้างวิดีโอเต็มรูปแบบก่อนยืนยันอีเมล
+
+### USER TIERS
+
+แบ่งสมาชิกเป็น 2 ประเภท
+
+## 1. FREE MEMBER
+
+ผู้ใช้ฟรีสามารถ:
+
+- สมัครและยืนยันอีเมล
+- เชื่อมต่อ API Key ของตัวเอง
+- เลือก AI Provider ที่ระบบรองรับ
+- เลือก Model
+- สร้าง Workflow
+- บันทึกโปรเจกต์
+- ใช้ Animation Engine
+- ทดลองระบบ Preview
+- Export ตามข้อจำกัดที่แอดมินกำหนด
+
+การใช้ API ส่วนตัวต้องไม่ถูกนำไปหักเครดิตของระบบส่วนกลาง
+
+อาจมีข้อจำกัดด้าน Storage, จำนวน Jobs, ระยะเวลาวิดีโอ และความถี่ของการ Render ตามการกำหนดของแอดมิน
+
+## 2. STUDIO PASS
+
+ราคาสมาชิกเริ่มต้น:
+
+350 THB / 30 Days
+
+สมาชิกสามารถ:
+
+- ใช้ API ส่วนกลางของ ZKatoon
+- ไม่ต้องใส่ API Key
+- ใช้ AI Brain ที่แอดมินกำหนด
+- ใช้ AI Voice ที่แอดมินกำหนด
+- เลือกโมเดลอื่นที่แอดมินอนุญาต
+- ใช้ Node Workflow
+- สร้างการ์ตูนและแผนที่
+- ส่งออกวิดีโอตามเครดิต
+- บันทึกโปรเจกต์และ History
+
+### CREDIT SYSTEM
+
+ต้องเป็นระบบ Credit Wallet แบบจริง
+
+แอดมินสามารถกำหนด:
+
+- เครดิตเริ่มต้นต่อเดือน
+- เครดิตสูงสุด
+- เครดิตที่ใช้ต่อโมเดล
+- เครดิตที่ใช้ต่อวิดีโอ
+- เครดิตต่อวินาที
+- เครดิตต่อภาพ
+- เครดิตต่อเสียง
+- ค่าใช้จ่ายสำหรับ Resolution ที่สูงขึ้น
+- เครดิตโบนัส
+- เครดิตหมดอายุ
+- จำนวน Jobs ที่ทำงานพร้อมกัน
+
+ไม่กำหนดเครดิตตายตัวใน Source Code
+
+ทุกค่าแก้ได้จาก Admin Dashboard
+
+### วิธีคิดเครดิต
+
+ก่อนเริ่มงานต้องประเมินค่าใช้จ่ายเบื้องต้น
+
+เมื่อเริ่ม Job:
+- Reserve เครดิตก่อน
+- บันทึก Job ID
+- ติดตามค่าใช้จ่ายจริง
+- เมื่อสำเร็จให้ Settlement
+- เมื่อมีเครดิตสำรองเหลือให้คืนส่วนที่ไม่ได้ใช้
+- เมื่อเกิด Error ต้องปล่อยหรือคืนเครดิตส่วนที่ไม่ได้ถูกใช้
+- เก็บประวัติทุกธุรกรรมใน Credit Ledger
+
+ใช้ Database Transaction หรือระบบ Atomic Operation ป้องกันการหักเครดิตซ้ำจากการกดปุ่มหลายครั้ง
+
+ห้ามให้ผู้ใช้แก้ไขเครดิตจาก Frontend
+
+---
+
+# PART 4 — SUPER ADMIN SYSTEM
+
+กำหนด Super Admin Allowlist ดังนี้:
+
+zbcd1053@gmail.com
+
+zeetosit@gmail.com
+
+อีเมลสองบัญชีนี้ต้องได้รับสิทธิ์ Super Admin ทั้งหมด
+
+การตรวจสอบสิทธิ์:
+
+1. ตรวจสอบ Firebase ID Token ที่ Backend
+2. ตรวจสอบอีเมลจริงจาก Token
+3. ต้องเป็นอีเมลที่ยืนยันแล้ว
+4. เปรียบเทียบกับ Super Admin Allowlist แบบ Exact Match
+5. กำหนด Admin Custom Claims จากฝั่ง Server
+6. ตรวจสอบสิทธิ์ทุก Admin API
+7. ห้ามเชื่อข้อมูล Role ที่ส่งมาจาก Client
+
+ห้ามเปิดช่องให้ผู้ใช้เปลี่ยนอีเมลใน Local Storage เพื่อรับสิทธิ์ Admin
+
+ใช้ Server-side Authorization ทุกครั้ง
+
+### ADMIN DASHBOARD
+
+สร้างเมนูต่อไปนี้:
+
+1. Overview
+2. User Management
+3. Membership Management
+4. Payment Management
+5. Access Code Management
+6. API Provider Management
+7. Model Management
+8. Credit Management
+9. Voice Management
+10. Animation Engine
+11. Map Engine
+12. Workflow Node Builder
+13. Page Builder
+14. Template Management
+15. Jobs & Render Monitor
+16. System Logs
+17. Security Settings
+18. Website Settings
+
+### Overview
+
+แสดง:
+
+- จำนวนสมาชิกทั้งหมด
+- สมาชิก Free
+- สมาชิก Paid
+- สมาชิกหมดอายุ
+- งานที่กำลัง Render
+- งานสำเร็จ
+- งานล้มเหลว
+- เครดิตที่ถูกใช้งาน
+- API Cost
+- ยอดรายรับ
+- รายการชำระเงินล่าสุด
+
+### User Management
+
+แอดมินสามารถ:
+
+- ค้นหาผู้ใช้
+- ดูอีเมล
+- ดูสถานะยืนยันอีเมล
+- ดูแพ็กเกจ
+- ดูเครดิต
+- ดูโปรเจกต์
+- ดูประวัติการใช้ API
+- ระงับบัญชี
+- ปลดระงับ
+- เพิ่มสมาชิก
+- ปรับวันหมดอายุ
+- เพิ่มหรือลดเครดิต
+- กำหนด Role
+
+ทุกการกระทำสำคัญต้องบันทึก Audit Log
+
+---
+
+# PART 5 — PAYMENT SYSTEM
+
+ต้องรองรับการชำระเงิน 2 รูปแบบพร้อมกัน
+
+## A. Manual Payment
+
+PromptPay / Bank Transfer
+
+ระบบต้องมี:
+
+- หน้าแสดง QR Code ของแอดมิน
+- แสดงจำนวนเงิน
+- Reference Code ของรายการ
+- อัปโหลดหลักฐานการโอน
+- แสดงสถานะ Pending
+- แอดมินตรวจสอบ
+- Approve / Reject
+- กรอกเหตุผลเมื่อปฏิเสธ
+- บันทึกเวลาและผู้อนุมัติ
+
+เมื่อ Approve สำเร็จ:
+
+- เปิดสิทธิ์ Studio Pass
+- กำหนดวันที่เริ่มสมาชิก
+- กำหนดวันหมดอายุ 30 วัน
+- เพิ่มเครดิตตามแพ็กเกจ
+- ส่งอีเมลแจ้งสถานะ
+
+ห้ามอนุมัติจากการอัปโหลดสลิปเพียงอย่างเดียว
+
+ต้องให้แอดมินตรวจสอบเงินจริง หรือใช้ระบบตรวจสอบที่ได้รับอนุมัติ
+
+## B. Payment Gateway
+
+สร้างระบบ Payment Provider Adapter เพื่อรองรับ Gateway ในอนาคต
+
+ต้องมี:
+
+- Create Checkout Session
+- Payment Status
+- Payment Reference
+- Webhook
+- Signature Verification
+- Idempotency
+- Payment History
+- Refund Status
+- Subscription Expiration
+
+Gateway ต้องเลือกและตั้งค่าได้โดยแอดมิน
+
+ห้ามสมมติว่ามี Merchant Account หรือ Credentials อยู่แล้ว
+
+หากยังไม่มี Payment Gateway Credentials ให้แสดงสถานะ NOT CONFIGURED และเก็บส่วน Manual Payment ให้ทำงานได้จริง
+
+Webhook ต้องตรวจลายเซ็นจาก Provider ที่ Server และไม่เชื่อผลการชำระเงินจาก Frontend
+
+### Admin Configuration
+
+แอดมินกำหนดได้:
+
+- เปิด/ปิด Manual Payment
+- เปิด/ปิด Payment Gateway
+- PromptPay ID
+- QR Image
+- ชื่อบัญชี
+- Bank Account
+- ราคา
+- Promotion
+- Membership Duration
+- Payment Expiration
+- เครดิตต่อแพ็กเกจ
+
+สร้างระบบ Admin Activation Code เพิ่มเติมเป็นตัวเลือกสำหรับกรณีที่แอดมินต้องการมอบสมาชิกให้ผู้ใช้โดยไม่ต้องชำระเงิน
+
+รหัสต้องใช้ได้ครั้งเดียว มีวันหมดอายุ และมีประวัติการใช้งาน
+
+---
+
+# PART 6 — UNIVERSAL AI PROVIDER SYSTEM
+
+สร้าง AI Provider Hub ที่รองรับการเชื่อมต่อหลายบริษัท
+
+อย่าออกแบบให้ผูกกับ OpenRouter เพียงค่ายเดียว
+
+ให้ใช้ Provider Adapter Architecture
+
+Provider ที่ต้องเตรียมรองรับ:
+
+- OpenRouter
+- Google Gemini API
+- OpenAI
+- Anthropic
+- OpenAI-compatible APIs
+- ผู้ให้บริการอื่นที่เพิ่มผ่านระบบ Adapter ได้
+
+ข้อกำหนด:
+
+- เพิ่ม Provider ได้จาก Admin Dashboard
+- แก้ไข Provider ได้
+- เปิด/ปิด Provider
+- ตรวจสอบ API Connection
+- ตรวจสอบ API Balance หาก Provider รองรับ
+- ตรวจสอบ Model Availability
+- ดึงรายการ Model จาก Provider เมื่อมี API รองรับ
+- บันทึก Model Catalog
+- ระบุประเภท Model
+- ระบุราคา
+- ระบุ Context Window
+- ระบุ Capabilities
+- ระบุ Input/Output Modalities
+- ระบุ Rate Limits เมื่อมีข้อมูล
+- ระบุ Model Fallback
+
+สำหรับ Provider ที่ใช้ OpenAI-compatible API ให้มี Adapter กลาง โดยอนุญาตเฉพาะ Base URL ที่ผ่านการตรวจสอบหรือ Whitelist จากแอดมิน เพื่อป้องกัน SSRF และการเรียก API ภายนอกที่ไม่ปลอดภัย
+
+ห้ามอ้างว่ารองรับทุกค่ายโดยอัตโนมัติ ต้องมี Adapter ที่ใช้งานได้จริงก่อน
+
+### BYOK — BRING YOUR OWN KEY
+
+ผู้ใช้ฟรีสามารถกรอก API Key ของตนเอง
+
+UI:
+- Provider Name
+- API Key
+- Base URL (ถ้าจำเป็น)
+- Test Connection
+- Model Selector
+- Save Connection
+- Delete Connection
+
+ความปลอดภัย:
+
+- ส่ง Key ผ่าน HTTPS
+- ไม่บันทึกลง Browser Local Storage
+- ไม่แสดง Key เต็มหลังบันทึก
+- ไม่ส่ง Key กลับไป Frontend
+- ไม่เขียน Key ลง Logs
+- ใช้ Encryption ฝั่ง Server ก่อนจัดเก็บ
+- ใช้ Google Cloud KMS หรือ Envelope Encryption เมื่อพร้อมใช้งาน
+- จำกัดการถอดรหัสเฉพาะ Backend Service
+- มีปุ่มลบ Credential
+
+### CENTRAL API
+
+สมาชิก Studio Pass ไม่ต้องกรอก Key
+
+ระบบใช้ API Key กลางของแพลตฟอร์มผ่าน Server Secrets
+
+จัดเก็บใน Environment Variables หรือ Secret Manager
+
+ตัวอย่างชื่อตัวแปร:
+
+OPENROUTER_API_KEY
+
+GEMINI_API_KEY
+
+OPENAI_API_KEY
+
+ห้ามนำ API Key จริงมาใส่ใน Source Code
+
+ห้ามส่ง API Key จริงไปให้ Browser
+
+ห้าม Commit Secrets เข้า GitHub
+
+---
+
+# PART 7 — DEFAULT AI BRAIN & VOICE
+
+กำหนดโมเดลเริ่มต้นจาก System Settings
+
+## AI BRAIN
+
+Default:
+
+nvidia/nemotron-3.5-super-vl:free
+
+Provider: OpenRouter
+
+URL:
+
+https://openrouter.ai/nvidia/nemotron-3.5-super-vl:free
+
+หน้าที่:
+
+- วิเคราะห์หัวข้อ
+- เขียนบท
+- วางแผนเรื่อง
+- วิเคราะห์ Reference Images
+- แบ่งฉาก
+- สร้าง Storyboard
+- วาง Timeline
+- ออกแบบ Workflow
+- ตรวจสอบความสอดคล้องของเรื่อง
+- ช่วยแก้ไขโครงการ
+
+## AI VOICE
+
+Default:
+
+fish-audio/s2.1-pro-free:free
+
+Provider: OpenRouter
+
+หน้าที่:
+
+- Text-to-Speech
+- บทพูดภาษาไทย
+- บทพูดภาษาอังกฤษ
+- เสียงสนทนา
+- เสียงบรรยาย
+- เสียงตัวละคร
+- ควบคุมอารมณ์และรูปแบบเสียงตามความสามารถของโมเดล
+
+ต้องทำระบบ Voice Model Selector ให้เลือกเสียงได้ตามโมเดลที่เปิดใช้งาน
+
+ต้องบันทึกไฟล์ Audio ที่ได้ลง Storage
+
+## ข้อกำหนดเพิ่มเติม
+
+ระบบ Brain และ Voice ต้องเลือกโมเดลแยกกัน
+
+สมาชิก Studio Pass ใช้โมเดลกลางของระบบ
+
+สมาชิก Free ใช้ Model จาก API Key ของตนเอง
+
+AI Brain ต้องไม่ทำหน้าที่สร้างภาพหรือวิดีโอเอง เว้นแต่ Model จะรองรับงานนั้นจริง
+
+ต้องมี Fallback Model ที่แอดมินเลือกได้
+
+หากโมเดลฟรีไม่พร้อมใช้งาน:
+
+- Retry ตามจำนวนครั้งที่กำหนด
+- สลับไปยัง Fallback ที่ได้รับอนุญาต
+- แจ้งสถานะให้ผู้ใช้
+- ไม่เรียกโมเดลเสียเงินโดยไม่ตรวจเครดิตและสิทธิ์
+- เก็บ Error Logs
+
+ห้ามสมมติว่าโมเดล Free มี Availability แบบไม่จำกัด
+
+หากโมเดลปลายทางมีข้อกำหนดห้ามใช้ข้อมูลใบหน้าหรือเสียงส่วนบุคคล ต้องแจ้งผู้ใช้และไม่ส่งข้อมูลนั้นไปยังโมเดลโดยอัตโนมัติ
+
+---
+
+# PART 8 — MODEL REGISTRY
+
+สร้างฐานข้อมูลกลางสำหรับ Model ทั้งหมด
+
+Model Categories:
+
+1. LLM
+2. Vision
+3. Image Generation
+4. Image Editing
+5. Text-to-Speech
+6. Speech-to-Text
+7. Audio Generation
+8. Video Generation
+9. Video Editing
+10. Embedding
+11. Animation
+12. Map Rendering
+
+แต่ละ Model ต้องมี:
+
+- ID
+- Provider
+- Display Name
+- API Model ID
+- Task Type
+- Capabilities
+- Pricing
+- Context Length
+- Max Output
+- Supported Languages
+- Input Formats
+- Output Formats
+- Availability
+- Free / Paid
+- Active / Disabled
+- Default / Alternative
+- Fallback
+- API Documentation URL
+
+ระบบต้องไม่แสดง Video Model ในช่องเลือก Text Model
+
+ระบบต้องไม่แสดง TTS Model ในช่องเลือก Image Model
+
+แอดมินสามารถกำหนด Model ที่สมาชิกใช้ได้แยกตาม Free และ Studio Pass
+
+---
+
+# PART 9 — VIDEO WORKFLOW LEGO EDITOR
+
+สร้าง Workflow Editor โดยใช้ React Flow / XYFlow หากเข้ากับ Framework เดิม
+
+เป็นพื้นที่ Canvas ขนาดใหญ่ที่สามารถ Zoom, Pan, Drag, Connect Nodes ได้
+
+หน้าตาควรเหมือน Visual Programming Software ระดับมืออาชีพ
+
+### NODE TYPES
+
+#### INPUT NODES
+- Idea Input
+- Text Input
+- Image Upload
+- Video Upload
+- Audio Upload
+- URL Input
+- Reference Input
+
+#### AI NODES
+- AI Brain
+- Script Writer
+- Story Planner
+- Scene Splitter
+- Prompt Generator
+- Image Analysis
+- Quality Reviewer
+
+#### CHARACTER NODES
+- Character Creator
+- Character Reference
+- Character Consistency
+- Expression
+- Pose
+- Costume
+
+#### VISUAL NODES
+- Image Generator
+- Background Generator
+- Scene Generator
+- Style Selector
+- Map Scene
+- 2D Animation
+- 3D Animation
+- Canvas Animation
+
+#### AUDIO NODES
+- Text-to-Speech
+- Voice Selector
+- Voice Upload
+- Audio Alignment
+- Music
+- Sound Effects
+- Audio Mixer
+
+#### VIDEO NODES
+- Video Generation
+- Video Upload
+- Clip Cutter
+- Transition
+- Caption
+- Timeline
+- Composite
+- Quality Check
+- Export
+
+### NODE BEHAVIOR
+
+ทุก Node ต้องมี:
+
+- Unique ID
+- Node Type
+- Version
+- Position
+- Input Ports
+- Output Ports
+- Configuration
+- Execution Status
+- Error State
+- Output Reference
+
+รองรับ:
+- Drag & Drop
+- Connect / Disconnect
+- Delete
+- Duplicate
+- Copy & Paste
+- Undo / Redo
+- Zoom
+- Pan
+- Auto Layout
+- Save Workflow
+- Load Workflow
+- Export / Import Workflow JSON
+- Template
+
+Workflow ต้องสามารถทำงานแบบ DAG ได้จริง
+
+รองรับการทำงานแบบ Parallel เมื่อ Nodes ไม่ได้ขึ้นต่อกัน
+
+รองรับการรันเฉพาะ Node ที่เลือก
+
+รองรับการรันต่อจาก Node ที่ล้มเหลว
+
+ห้ามรัน Node ซ้ำโดยไม่จำเป็นเมื่อ Output เดิมยังใช้ได้
+
+ทำ Node Registry แยกจาก UI เพื่อให้สามารถเพิ่ม Node ในอนาคตโดยไม่ต้องแก้ระบบหลักทั้งหมด
+
+ห้ามให้ผู้ใช้ทั่วไปใส่ JavaScript แล้วนำไป Execute โดยตรงบน Server
+
+---
+
+# PART 10 — ADMIN LEGO PAGE BUILDER
+
+แยกจาก Video Workflow Editor โดยเด็ดขาด
+
+สร้างระบบ Page Builder ให้แอดมินจัดหน้าเว็บไซต์ด้วยการลากบล็อก
+
+Block Types:
+
+- Header
+- Hero
+- Text
+- Image
+- Video
+- Gallery
+- Feature Cards
+- Pricing
+- FAQ
+- Testimonials
+- CTA
+- Contact Form
+- Footer
+- Custom Section
+
+รองรับ:
+
+- Drag & Drop
+- Resize
+- Reorder
+- Desktop Preview
+- Tablet Preview
+- Mobile Preview
+- Draft
+- Publish
+- Unpublish
+- Save Version
+- Rollback
+- SEO Title
+- SEO Description
+- Page Slug
+
+สามารถสร้างหน้า:
+
+- Home
+- About
+- Pricing
+- FAQ
+- Tutorials
+- Promotions
+- Contact
+- Custom Pages
+
+เก็บโครงสร้างหน้าเป็น JSON Schema ที่ปลอดภัย
+
+ไม่ Execute HTML/JavaScript ที่ผู้ใช้ทั่วไปใส่เข้ามาโดยตรง
+
+---
+
+# PART 11 — ANIMATE ENGINE INTEGRATION
+
+ศึกษาและนำแนวทางจาก Repository นี้มาใช้:
+
+https://github.com/cth9191/animate
+
+Repository:
+
+cth9191/animate
+
+License: MIT
+
+ต้องรักษา Copyright และ MIT License Notice ของต้นฉบับ
+
+อย่าคัดลอกทั้งหมดลง Frontend โดยไม่มีการวางสถาปัตยกรรมใหม่
+
+ให้นำแกน Animation มาทำเป็น Engine Module แยกต่างหากใน Backend Worker
+
+ศึกษาและนำแนวคิดเหล่านี้มาใช้:
+
+- Procedural Animation
+- Canvas Rendering
+- Deterministic Frame Rendering
+- Seeded Randomness
+- Camera Movement
+- Morph Transitions
+- Story Grammar
+- Storyboard
+- Audio Timeline
+- Scene Management
+- Export MP4
+- Render Review
+- Frame Validation
+
+### INITIAL STYLES
+
+1. Cut Paper
+2. Crosshatch
+3. Riso Print
+4. Sketchbook
+5. Math
+6. Pixel
+7. Isometric
+8. Custom Style
+
+ระบบ Style ต้องเป็น Plugin Architecture
+
+หนึ่งโครงการสามารถกำหนด Style และ Character Reference ได้
+
+### PRODUCTION FLOW
+
+1. รับหัวข้อ
+2. วิเคราะห์หัวข้อด้วย AI Brain
+3. เขียน Script
+4. ตรวจสอบ Script
+5. แบ่ง Scene
+6. สร้าง Style Frames 2–4 ภาพ
+7. ตรวจ Storyboard
+8. สร้าง Animation
+9. ใส่เสียง
+10. จับเวลาเสียงจริง
+11. Render
+12. ตรวจคุณภาพ
+13. ส่งออก MP4
+
+อย่าเริ่มเรนเดอร์ฉบับเต็มก่อนมี Storyboard
+
+### AUDIO SYNCHRONIZATION
+
+ต้องให้เสียงพากย์เป็นตัวกำหนดจังหวะเวลาเมื่อใช้ Narration
+
+ใช้ระบบ Multilingual Speech Recognition / Forced Alignment ที่รองรับภาษาไทย
+
+ห้ามใช้โมเดลที่จำกัดภาษาอังกฤษเป็นตัวหลักของเสียงภาษาไทย
+
+รองรับ:
+- Sentence Timing
+- Word Timing
+- Pause Detection
+- Voice Over
+- Background Music
+- Sound Effects
+- Audio Ducking
+- Audio Mixing
+- Re-Generate Voice
+- Re-Sync Timeline
+
+การเปลี่ยนเสียงพากย์ใหม่ต้องทำให้ Timeline อัปเดตตามเสียงจริง
+
+ห้ามประมาณเวลาจากจำนวนตัวอักษรแล้วนำมาใช้เป็นผลลัพธ์สุดท้ายโดยไม่แจ้งว่าเป็นค่าประมาณ
+
+### RENDER ENGINE
+
+ใช้:
+- Node.js
+- Playwright
+- Chromium
+- FFmpeg
+
+ติดตั้งใน Render Worker Container แยกจาก Web Frontend
+
+รองรับการสร้างไฟล์ MP4 ที่มีเสียงจริง
+
+ต้องมี Render Queue และ Job Status
+
+อย่าให้ผู้ใช้ต้องเปิด Browser ค้างเพื่อรอเรนเดอร์
+
+---
+
+# PART 12 — MAP ANIMATION ENGINE
+
+สร้างระบบแผนที่เป็นเครื่องมืออีกประเภทภายใน ZKatoon
+
+รองรับ:
+
+- World Map
+- Country Map
+- City Map
+- Historical Map
+- Geography
+- War History
+- Travel Route
+- Flight Path
+- Border Changes
+- Location Markers
+- Animated Zoom
+- Camera Flyover
+- Map Timeline
+- Path Animation
+- 2D Map
+- 3D Globe
+
+สามารถใช้ MapLibre GL JS หรือเครื่องมือที่เหมาะสม
+
+รองรับข้อมูล GeoJSON และแหล่งข้อมูลแผนที่ที่สามารถเปลี่ยนจาก Admin Settings ได้
+
+### MAP WORKFLOW
+
+1. รับหัวข้อ
+2. AI วิเคราะห์พื้นที่
+3. ระบุสถานที่
+4. สร้างแผนที่
+5. กำหนด Camera
+6. สร้าง Route
+7. สร้าง Timeline
+8. เพิ่มข้อความและเสียงบรรยาย
+9. Preview
+10. Render MP4
+
+ให้สามารถใช้ AI สร้างคำอธิบายและลำดับการนำเสนอได้
+
+แต่พิกัดและข้อมูลภูมิศาสตร์ต้องตรวจสอบจากข้อมูลจริง
+
+ห้ามแต่งพิกัดหรือเส้นเขตแดนขึ้นเอง
+
+ต้องแสดง Attribution ของแหล่งข้อมูลแผนที่ตามใบอนุญาต
+
+---
+
+# PART 13 — PROJECT MANAGER
+
+สร้างระบบจัดการโครงการ
+
+สมาชิกสามารถ:
+
+- Create Project
+- Rename
+- Duplicate
+- Delete
+- Archive
+- Save Draft
+- Autosave
+- Open Recent Projects
+- Restore Previous Version
+- View Render History
+- Download Files
+
+เก็บ:
+- Project Settings
+- Script
+- Storyboard
+- Nodes
+- Character Reference
+- Images
+- Audio
+- Video
+- Timeline
+- Export Files
+
+ระบบต้องแยกข้อมูลตาม User ID
+
+สมาชิกหนึ่งคนห้ามเข้าถึงไฟล์ของสมาชิกคนอื่น
+
+ใช้ Storage ที่มี Authentication และตรวจสิทธิ์ก่อน Download
+
+---
+
+# PART 14 — VIDEO EXPORT SYSTEM
+
+รองรับอัตราส่วน:
+
+- 9:16
+- 16:9
+- 1:1
+- 4:5
+
+รองรับ Resolution:
+
+| Resolution | แนวตั้ง | แนวนอน |
+|---|---|---|
+| 720p | 720 × 1280 | 1280 × 720 |
+| 1080p | 1080 × 1920 | 1920 × 1080 |
+| 1440p | 1440 × 2560 | 2560 × 1440 |
+| 4K | 2160 × 3840 | 3840 × 2160 |
+
+รองรับ:
+- MP4
+- H.264
+- AAC
+- 24 / 30 / 60 FPS ตามความสามารถของ Renderer
+- เสียงประกอบจริง
+- Narration
+- Music
+- SFX
+- Subtitle File ถ้ามีการเลือกใช้
+
+ต้องแยก Native Resolution และ Upscaled Resolution ให้ชัดเจน
+
+ห้ามอ้างว่าเป็น Native 4K หากเป็นเพียงการ Upscale จากไฟล์ความละเอียดต่ำ
+
+สร้างระบบ:
+- Render Queue
+- Job Progress
+- Cancel Job
+- Retry Job
+- Download
+- Storage Cleanup
+- Render Error Recovery
+
+การ Render 2K/4K ให้ทำงานบน Background Worker
+
+รองรับแบ่งงานเป็น Scene และนำมารวมกัน เพื่อไม่ให้หน่วยความจำเต็ม
+
+---
+
+# PART 15 — QUALITY ASSURANCE
+
+ทุกวิดีโอที่ Render ต้องผ่านการตรวจสอบ
+
+ตรวจ:
+1. Resolution
+2. FPS
+3. Duration
+4. Frame Count
+5. Black Frames
+6. Blank Frames
+7. Missing Assets
+8. Audio Track
+9. Audio Duration
+10. Audio Sync
+11. Text Overflow
+12. Safe Area
+13. Scene Transitions
+14. Render Integrity
+
+ห้ามแจ้งว่าสำเร็จถ้ายังไม่มีไฟล์ MP4 จริง
+
+ต้องมีหน้ารายงานผล:
+
+- PASS
+- WARNING
+- FAILED
+
+สามารถย้อนกลับไปแก้เฉพาะ Scene ที่มีปัญหาได้
+
+---
+
+# PART 16 — DATABASE ARCHITECTURE
+
+ใช้ Firebase Auth และ Firestore หากเข้ากับระบบเดิม
+
+Collection ที่ควรมี:
+
+users
+userCredentials
+subscriptions
+plans
+wallets
+creditLedger
+payments
+accessCodes
+providers
+models
+systemSettings
+projects
+workflows
+nodeRegistry
+nodeExecutions
+renderJobs
+assets
+templates
+pages
+pageVersions
+auditLogs
+
+ข้อมูลต้องออกแบบให้รองรับการขยายในอนาคต
+
+ทุก Collection ต้องมี Ownership และ Access Control ที่ชัดเจน
+
+### SECURITY RULES
+
+- User อ่าน/แก้ไขข้อมูลของตัวเองเท่านั้น
+- User ห้ามเขียนเครดิตด้วยตนเอง
+- User ห้ามเปลี่ยน Role
+- User ห้ามอนุมัติ Payment
+- User ห้ามเปลี่ยน Subscription Status
+- User ห้ามอ่าน API Credentials ของผู้อื่น
+- User ห้ามเรียก Admin APIs
+- Admin ต้องผ่านการตรวจสอบสิทธิ์จาก Server
+
+ใช้ Firebase Security Rules ร่วมกับ Server-side Authorization
+
+ห้ามใช้ Public Read/Write ใน Production
+
+---
+
+# PART 17 — CLOUD ARCHITECTURE
+
+ใช้สถาปัตยกรรมที่เข้ากับ Google AI Studio Build Mode
+
+หากโปรเจกต์เดิมไม่มีโครงสร้าง Backend ที่เหมาะสม ให้ใช้:
+
+Frontend:
+React + TypeScript หากไม่ขัดกับระบบเดิม
+
+Backend:
+Node.js Server
+
+Authentication:
+Firebase Auth
+
+Database:
+Cloud Firestore
+
+Storage:
+Google Cloud Storage
+
+Secrets:
+Google AI Studio Secrets / Google Secret Manager
+
+Render Worker:
+Docker + Node.js + Playwright + Chromium + FFmpeg
+
+Deployment:
+Google Cloud Run
+
+Queue:
+Cloud Tasks หรือระบบ Queue ที่เหมาะสม
+
+การประมวลผลวิดีโอแยกจาก Web Request
+
+ห้ามทำงาน Render ยาว ๆ ภายใน HTTP Request ที่เปิดหน้าเว็บค้างไว้
+
+---
+
+# PART 18 — SYSTEM SETTINGS
+
+ทุกอย่างที่แอดมินควบคุมได้ต้องแก้ไขได้โดยไม่ต้องแก้ Source Code
+
+เช่น:
+
+- Website Name
+- Logo
+- Splash Duration
+- Colors
+- Theme
+- Membership Price
+- Membership Days
+- Monthly Credits
+- Models
+- API Providers
+- Default Brain
+- Default Voice
+- Fallback Model
+- Max Duration
+- Max Resolution
+- FPS
+- Render Limits
+- Storage Limits
+- Payment Settings
+- Feature Flags
+- Maintenance Mode
+
+ต้องบันทึกค่าลง Database หรือ Configuration Store
+
+ห้ามกระจายค่า Configuration เป็นตัวเลข Hardcode ในหลายไฟล์
+
+---
+
+# PART 19 — UI/UX REQUIREMENTS
+
+Desktop:
+- Sidebar Navigation
+- Main Workspace
+- Context Panel
+- Preview Area
+- Node Canvas
+- Timeline
+
+Mobile:
+- Responsive Layout
+- Project Management
+- Script Editor
+- Storyboard Viewer
+- Preview Player
+- Render Status
+- Download
+
+Node Editor สามารถแสดงบนมือถือได้ แต่เน้น Desktop สำหรับการลากต่อ Workflow ที่ซับซ้อน
+
+ทุกปุ่มต้องมี Action จริง
+
+ทุก Form ต้อง Validate
+
+แสดง Loading / Error / Success State
+
+ไม่ใช้ปุ่มที่กดแล้วไม่มีผล
+
+ไม่ใส่ข้อมูลปลอมเพื่อให้หน้าเว็บดูเต็ม
+
+หากยังไม่มี API Credentials ให้แสดงสถานะ Not Configured อย่างชัดเจน
+
+---
+
+# PART 20 — IMPLEMENTATION STRATEGY
+
+ห้ามพยายามสร้างทุกอย่างพร้อมกันโดยไม่ตรวจสอบ
+
+แบ่งการทำงานเป็น 7 ระยะ
+
+## PHASE 0: AUDIT & BACKUP
+ตรวจสอบระบบเดิมและสำรอง Source Code
+
+## PHASE 1: FOUNDATION
+สร้าง Authentication, User Profile, Role, Admin Access และ Database Schema
+
+## PHASE 2: API & CREDIT
+สร้าง Provider Adapter, Model Registry, BYOK, Central API Gateway และ Credit Ledger
+
+## PHASE 3: PAYMENT
+สร้าง Manual Payment, Gateway Adapter, Subscription และ Admin Approval
+
+## PHASE 4: CREATIVE STUDIO
+สร้าง Workflow LEGO Editor, Node Registry, Project Manager และ Page Builder
+
+## PHASE 5: CREATION ENGINES
+เชื่อม Animate Engine, Map Engine, Audio Engine และ AI Generation
+
+## PHASE 6: RENDER & DELIVERY
+สร้าง Background Queue, FFmpeg Export, MP4 Delivery และ Quality Checks
+
+ทุก Phase ต้อง:
+- ตรวจสอบ Source Code เดิม
+- แก้ไขอย่างเป็นระบบ
+- Run Build
+- Run Tests
+- ตรวจสอบหน้าเว็บ
+- แก้ไข Error
+- บันทึกสิ่งที่เปลี่ยนแปลง
+
+สร้าง DEVELOPMENT_LOG.md เพื่อบันทึกความคืบหน้า
+
+หากมีการเปลี่ยนแปลง Database Schema ให้สร้าง Migration หรือแนวทาง Backward Compatibility
+
+---
+
+# PART 21 — ACCEPTANCE CRITERIA
+
+ระบบจะถือว่าพร้อมใช้งานเมื่อผ่านรายการต่อไปนี้:
+
+### AUTH
+- สมัครสมาชิกได้
+- ยืนยันอีเมลได้
+- Login / Logout ได้
+- Admin ทั้งสองอีเมลได้รับสิทธิ์จริง
+- ผู้ใช้อื่นไม่สามารถเข้าถึง Admin API
+
+### MEMBERSHIP
+- มี Free Plan
+- มี Studio Pass 350 บาท
+- กำหนดเครดิตได้
+- ตรวจวันหมดอายุได้
+- สมาชิกหมดอายุแล้วถูกจำกัดสิทธิ์
+
+### PAYMENT
+- ส่งสลิปได้
+- Admin Approve/Reject ได้
+- บันทึก Gateway Payment ได้เมื่อเชื่อม Provider จริง
+- Webhook ตรวจลายเซ็น
+- ไม่อนุมัติรายการซ้ำ
+
+### API
+- Free User เพิ่ม API Key ได้
+- Test Connection ได้
+- เลือก Model ได้
+- Paid User ใช้ API ส่วนกลางได้
+- API Key ไม่ปรากฏใน Frontend
+- Model Failure มี Error Handling
+
+### WORKFLOW
+- สร้าง Node ได้
+- เชื่อม Node ได้
+- Save / Load ได้
+- Run Workflow ได้
+- ตรวจ Dependency ได้
+- Retry งานได้
+- แสดง Output ได้
+
+### ANIMATION
+- สร้าง Script ได้
+- แบ่ง Scene ได้
+- สร้าง Storyboard ได้
+- Preview ได้
+- มีเสียงจริงใน MP4
+- Timeline Sync กับเสียงได้
+
+### EXPORT
+- ส่งออก MP4 จริงได้
+- ตรวจ Resolution ได้
+- ตรวจ Audio Track ได้
+- มีระบบ Job Status
+- ดาวน์โหลดได้
+
+---
+
+# FINAL INSTRUCTIONS
+
+ให้เริ่มต้นด้วยการตรวจสอบโปรเจกต์ ZKatoon ที่เปิดอยู่จริง
+
+อย่าเปลี่ยนชื่อโปรเจกต์
+
+อย่าสร้างหน้า Demo ใหม่แทนหน้าเดิม
+
+อย่าลบฟีเจอร์เดิม
+
+อย่าฝัง API Keys
+
+อย่าจำลองการชำระเงินแล้วแสดงว่าได้รับเงินจริง
+
+อย่าจำลองการ Render แล้วแสดงว่าสร้าง MP4 สำเร็จ
+
+อย่าแสดงว่ารองรับ Model ใด หากยังไม่ได้ตรวจสอบ API และความสามารถจริง
+
+ทำระบบเป็น Production-Oriented Architecture และทยอยพัฒนาตาม Phase
+
+หากบริการใดจำเป็นต้องใช้ Secret หรือบัญชีจากเจ้าของระบบ ให้สร้าง Configuration UI และระบุชื่อ Secret ที่ต้องตั้งค่า โดยไม่แต่งค่าขึ้นเอง
+
+เน้นความเสถียร ความปลอดภัย การรักษาระบบเดิม และความสามารถในการขยายระบบ
+
+**เป้าหมายสุดท้าย: ZKatoon ต้องเป็น AI Video Production Studio ที่ผู้ใช้สามารถสร้างวิดีโอได้ตั้งแต่เริ่มคิดเรื่องจนถึงไฟล์ MP4 โดยมีระบบ AI หลายค่าย ระบบ Node Workflow ระบบสมาชิก ระบบชำระเงิน และระบบแอดมินครบวงจร**
+
+เริ่มจาก Audit โปรเจกต์เดิม แล้วพัฒนาต่อทันทีตามลำดับข้างต้น

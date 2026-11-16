@@ -1,10 +1,16 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import {
+  createUserWithEmailAndPassword,
   getAuth,
   GoogleAuthProvider,
   onAuthStateChanged,
+  reload,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  updateProfile,
   type Auth,
   type User,
 } from 'firebase/auth';
@@ -92,10 +98,85 @@ export async function signOutFirebase(): Promise<void> {
   await signOut(auth);
 }
 
+export async function signUpWithEmailPassword(
+  email: string,
+  password: string,
+  displayName?: string
+): Promise<AuthUserProfile> {
+  if (!isFirebaseConfigured()) throw new Error('ยังไม่ได้ตั้งค่า Firebase');
+  const { auth } = getFirebaseServices();
+  const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+  if (displayName?.trim()) {
+    await updateProfile(cred.user, { displayName: displayName.trim() }).catch(() => {});
+  }
+  await sendEmailVerification(cred.user).catch(() => {});
+  return userToProfile(cred.user)!;
+}
+
+export async function signInWithEmailPassword(
+  email: string,
+  password: string
+): Promise<AuthUserProfile> {
+  if (!isFirebaseConfigured()) throw new Error('ยังไม่ได้ตั้งค่า Firebase');
+  const { auth } = getFirebaseServices();
+  const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+  return userToProfile(cred.user)!;
+}
+
+export async function resendVerificationEmail(): Promise<void> {
+  if (!isFirebaseConfigured()) throw new Error('ยังไม่ได้ตั้งค่า Firebase');
+  const { auth } = getFirebaseServices();
+  if (!auth.currentUser) throw new Error('กรุณาเข้าสู่ระบบก่อน');
+  await sendEmailVerification(auth.currentUser);
+}
+
+export async function sendResetPasswordEmail(email: string): Promise<void> {
+  if (!isFirebaseConfigured()) throw new Error('ยังไม่ได้ตั้งค่า Firebase');
+  const { auth } = getFirebaseServices();
+  await sendPasswordResetEmail(auth, email.trim());
+}
+
+export async function refreshCurrentFirebaseUser(): Promise<{ emailVerified: boolean; email: string | null }> {
+  if (!isFirebaseConfigured()) return { emailVerified: false, email: null };
+  const { auth } = getFirebaseServices();
+  if (!auth.currentUser) return { emailVerified: false, email: null };
+  await reload(auth.currentUser);
+  return {
+    emailVerified: auth.currentUser.emailVerified,
+    email: auth.currentUser.email,
+  };
+}
+
+export async function getFirebaseIdToken(forceRefresh = false): Promise<string | null> {
+  if (!isFirebaseConfigured()) return null;
+  const { auth } = getFirebaseServices();
+  if (!auth.currentUser) return null;
+  return await auth.currentUser.getIdToken(forceRefresh);
+}
+
 export function getCurrentFirebaseUid(): string | null {
   if (!isFirebaseConfigured()) return null;
   const { auth } = getFirebaseServices();
   return auth.currentUser?.uid || null;
+}
+
+export function getCurrentFirebaseAuthInfo(): {
+  uid: string | null;
+  email: string | null;
+  emailVerified: boolean;
+  displayName: string | null;
+} {
+  if (!isFirebaseConfigured()) {
+    return { uid: null, email: null, emailVerified: false, displayName: null };
+  }
+  const { auth } = getFirebaseServices();
+  const u = auth.currentUser;
+  return {
+    uid: u?.uid || null,
+    email: u?.email || null,
+    emailVerified: Boolean(u?.emailVerified),
+    displayName: u?.displayName || null,
+  };
 }
 
 export async function testFirestoreServerConnection(): Promise<'online' | 'offline' | 'unconfigured'> {

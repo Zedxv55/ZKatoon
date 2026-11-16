@@ -15,6 +15,12 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isSuperAdmin() {
+      return request.auth != null &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.email in ['zbcd1053@gmail.com', 'zeetosit@gmail.com'];
+    }
+
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -506,6 +512,71 @@ service cloud.firestore {
           allow delete: if isOwner(userId) && isValidId(workspaceId) && isValidId(assetId) && existing().ownerUid == request.auth.uid;
         }
       }
+    }
+
+    match /platform_users/{userId} {
+      allow get: if isSuperAdmin() || (isOwner(userId) && isValidId(userId));
+      allow list: if isSuperAdmin();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /wallets/{userId} {
+      allow get: if isSuperAdmin() || (isOwner(userId) && isValidId(userId));
+      allow list: if isSuperAdmin();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /credit_ledger/{txId} {
+      allow get: if isSuperAdmin() || (isSignedIn() && existing().uid == request.auth.uid);
+      allow list: if isSuperAdmin() || (isSignedIn() && existing().uid == request.auth.uid);
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /payments/{paymentId} {
+      allow get: if isSuperAdmin() || (isSignedIn() && existing().uid == request.auth.uid);
+      allow list: if isSuperAdmin() || (isSignedIn() && existing().uid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        isValidId(paymentId) &&
+        incoming().uid == request.auth.uid &&
+        incoming().status == 'pending' &&
+        incoming().amountThb is number && incoming().amountThb > 0;
+      allow update, delete: if isSuperAdmin();
+    }
+
+    match /access_codes/{code} {
+      allow get, list, create, update, delete: if isSuperAdmin();
+    }
+
+    match /workflows/{workflowId} {
+      allow get: if isSuperAdmin() || (isSignedIn() && existing().ownerUid == request.auth.uid);
+      allow list: if isSuperAdmin() || (isSignedIn() && existing().ownerUid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        isValidId(workflowId) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().keys().hasAll(['id', 'ownerUid', 'name', 'nodes', 'edges', 'updatedAt']);
+      allow update: if isSuperAdmin() || (
+        isSignedIn() &&
+        existing().ownerUid == request.auth.uid &&
+        incoming().ownerUid == existing().ownerUid
+      );
+      allow delete: if isSuperAdmin() || (isSignedIn() && existing().ownerUid == request.auth.uid);
+    }
+
+    match /pages/{pageId} {
+      allow get: if isSuperAdmin() || existing().status == 'published';
+      allow list: if isSuperAdmin() || existing().status == 'published';
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /render_jobs/{jobId} {
+      allow get: if isSuperAdmin() || (isSignedIn() && existing().uid == request.auth.uid);
+      allow list: if isSuperAdmin() || (isSignedIn() && existing().uid == request.auth.uid);
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /audit_logs/{logId} {
+      allow get, list: if isSuperAdmin();
+      allow create, update, delete: if isSuperAdmin();
     }
   }
 }

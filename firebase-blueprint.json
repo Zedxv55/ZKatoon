@@ -131,6 +131,134 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "ownerUid", "workspaceId", "projectId", "kind", "storagePath", "mimeType", "byteLength", "clientUpdatedAt", "syncVersion", "createdAt", "updatedAt"]
+    },
+    "PlatformUser": {
+      "title": "PlatformUser",
+      "description": "Platform membership, onboarding defaults, and role record (role/tier mutations server/admin only).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 240 },
+        "emailVerified": { "type": "boolean" },
+        "displayName": { "type": "string", "maxLength": 160 },
+        "role": { "type": "string", "enum": ["member", "super_admin"] },
+        "tier": { "type": "string", "enum": ["free", "studio_pass"] },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
+        "onboarding": { "type": "object" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["uid", "email", "emailVerified", "role", "tier", "status", "onboarding", "createdAt", "updatedAt"]
+    },
+    "CreditWalletDoc": {
+      "title": "CreditWalletDoc",
+      "description": "User credit wallet balance (read-only to owner, mutated strictly server-side).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "balance": { "type": "integer" },
+        "reserved": { "type": "integer" },
+        "monthlyAllowance": { "type": "integer" },
+        "totalSpent": { "type": "integer" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["uid", "balance", "reserved", "monthlyAllowance", "totalSpent", "updatedAt"]
+    },
+    "CreditLedgerDoc": {
+      "title": "CreditLedgerDoc",
+      "description": "Append-only credit ledger transaction (server/admin only write).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "type": { "type": "string" },
+        "amount": { "type": "integer" },
+        "balanceAfter": { "type": "integer" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "uid", "type", "amount", "balanceAfter", "createdAt"]
+    },
+    "ManualPaymentDoc": {
+      "title": "ManualPaymentDoc",
+      "description": "Manual PromptPay or Gateway payment submission (status transitions strictly server/super-admin).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "referenceCode": { "type": "string" },
+        "planId": { "type": "string" },
+        "amountThb": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "expired"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "uid", "referenceCode", "planId", "amountThb", "status", "createdAt"]
+    },
+    "AccessCodeDoc": {
+      "title": "AccessCodeDoc",
+      "description": "Single-use or capped promo/admin activation code.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "tier": { "type": "string" },
+        "days": { "type": "integer" },
+        "bonusCredits": { "type": "integer" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["code", "tier", "days", "bonusCredits", "active"]
+    },
+    "WorkflowGraphDoc": {
+      "title": "WorkflowGraphDoc",
+      "description": "Visual LEGO workflow graph saved by a user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "name": { "type": "string" },
+        "nodes": { "type": "array" },
+        "edges": { "type": "array" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "ownerUid", "name", "nodes", "edges", "updatedAt"]
+    },
+    "CmsPageDoc": {
+      "title": "CmsPageDoc",
+      "description": "Admin LEGO Page Builder published/draft pages.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "slug": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "published"] },
+        "blocks": { "type": "array" }
+      },
+      "required": ["id", "slug", "title", "status", "blocks"]
+    },
+    "RenderJobDoc": {
+      "title": "RenderJobDoc",
+      "description": "Background FFmpeg video render & QA job record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "projectId": { "type": "string" },
+        "status": { "type": "string" },
+        "resolution": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "uid", "projectId", "status", "resolution", "createdAt"]
+    },
+    "AuditLogDoc": {
+      "title": "AuditLogDoc",
+      "description": "Admin/security audit log record (super admin read only).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "actorUid": { "type": "string" },
+        "action": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "actorUid", "action", "createdAt"]
     }
   },
   "firestore": {
@@ -161,6 +289,42 @@
     "/users/{userId}/workspaces/{workspaceId}/assets/{assetId}": {
       "schema": { "$ref": "#/entities/AssetManifestCloud" },
       "description": "Manifest pointing to binary audio/GLB files stored in Firebase Storage"
+    },
+    "/platform_users/{userId}": {
+      "schema": { "$ref": "#/entities/PlatformUser" },
+      "description": "Platform membership, tier, and onboarding defaults"
+    },
+    "/wallets/{userId}": {
+      "schema": { "$ref": "#/entities/CreditWalletDoc" },
+      "description": "Atomic credit wallet (server-mutated)"
+    },
+    "/credit_ledger/{txId}": {
+      "schema": { "$ref": "#/entities/CreditLedgerDoc" },
+      "description": "Immutable credit transaction ledger"
+    },
+    "/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/ManualPaymentDoc" },
+      "description": "Manual PromptPay and gateway payment records"
+    },
+    "/access_codes/{code}": {
+      "schema": { "$ref": "#/entities/AccessCodeDoc" },
+      "description": "Admin-managed promo/activation codes"
+    },
+    "/workflows/{workflowId}": {
+      "schema": { "$ref": "#/entities/WorkflowGraphDoc" },
+      "description": "User-saved LEGO video workflows"
+    },
+    "/pages/{pageId}": {
+      "schema": { "$ref": "#/entities/CmsPageDoc" },
+      "description": "CMS pages built via Admin LEGO Page Builder"
+    },
+    "/render_jobs/{jobId}": {
+      "schema": { "$ref": "#/entities/RenderJobDoc" },
+      "description": "Background FFmpeg video render & QA jobs"
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLogDoc" },
+      "description": "Security & admin audit logs"
     }
   }
 }
